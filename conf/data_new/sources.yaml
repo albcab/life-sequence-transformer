@@ -1,0 +1,39 @@
+# @package data_new.sources
+
+# Health
+health:
+  _target_: src.dataloaders.sources.health_month.HealthMonthSource
+  name: health
+  # downsample: False
+
+# Labour
+labour:
+  _target_: src.dataloaders.sources.labor_month.LaborMonthSource
+  name: labor
+  subsidized: False
+  # downsample: False
+
+# Subsidized Labour
+sublabour:
+  _target_: src.dataloaders.sources.labor_month.LaborMonthSource
+  name: labor
+  subsidized: True
+  
+# # Education  
+# education:
+#   _target_: src.data_new.sources.education.EducationTokens
+#   name: "education"
+#   # downsample: False
+
+
+# # Health PUF
+# health_puf:
+#   _target_: src.dataloaders.sources.health_puf.HealthMonthSource
+#   name: health
+#   # downsample: False
+
+# Labour PUF
+labour_puf:
+  _target_: src.dataloaders.sources.labor_puf.LaborMonthSource
+  name: labor
+  # downsample: False

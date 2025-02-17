@@ -1,0 +1,5 @@
+defaults:
+  - /data_new/sources
+
+_target_: src.dataloaders.populations.users.UserMonthPopulation
+name: users_month

@@ -1,0 +1,15 @@
+defaults:
+  # - /data_new/corpus@corpus: global_set
+  # - /data_new/vocabulary@vocabulary: global_set
+  - /data_new/corpus@corpus: puf_set
+  - /data_new/vocabulary@vocabulary: puf_set
+  - /task@task: decoder #change hardcoded in base.py
+
+_target_: src.dataloaders.datamodule.L2VDataModule
+
+batch_size: 8 #64 ###assuming 1 million params
+num_workers: 2 #8
+
+### If you want to train the model on subsets of data
+subset: False
+subset_id: 0 #max 2

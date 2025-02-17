@@ -1,0 +1,31 @@
+
+defaults:
+  - _self_
+  - /data_new/sources
+  
+target: ???
+
+single_threaded: false
+interact: false
+
+client:
+  _target_: dask.distributed.Client
+  n_workers: 2                 # One worker per GPU
+  threads_per_worker: 16       # Distribute CPU threads per worker
+  memory_limit: "64GB"         # Allocate half of the total RAM per worker
+  dashboard_address: :8787     # Default dashboard port
+  local_directory: ./dask_temp # Directory for temporary worker storage
+
+"""
+Processore: Processore AMD Ryzen™ Threadripper™ PRO 7965WX (da 4,2 GHz fino a 5,3 GHz)
+
+    Sistema operativo: Windows 11 Pro 64
+
+    Scheda madre: AMD Storm Peak
+
+    Memoria: 2 x 64 GB DDR5-4.800MHz (RDIMM, ECC)
+
+    Scheda grafica: NVIDIA RTX™ A4000 16GB GDDR6upgrade selezionato
+
+    Second Graphic Card : NVIDIA RTX™ A4000 16GB GDDR6upgrade selezionato
+"""

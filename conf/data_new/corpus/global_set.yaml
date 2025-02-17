@@ -1,0 +1,14 @@
+defaults:
+  - /data_new/sources
+  - /data_new/population@population: global_set
+
+_target_: src.dataloaders.datamodule.Corpus
+
+name: labor_sublabor_health
+reference_year: ...
+threshold_year: ...
+
+sources:
+  - ${data_new.sources.labour}
+  - ${data_new.sources.sublabour}
+  - ${data_new.sources.health}

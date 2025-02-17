@@ -1,0 +1,16 @@
+_target_: src.dataloaders.tasks.decode.Decode
+
+name: decoder
+max_length: 1560
+
+# Augmentation
+p_sequence_reverse_events: 0.1
+p_sequence_shuffle_events: 0.1
+p_sequence_shuffle_tokens: 0.1
+p_sentence_drop_tokens: 0.01
+
+# p_sequence_timecut: 0.0
+# p_sequence_resample: 0.4
+# p_sequence_abspos_noise: 0.1
+# p_sequence_hide_background: 0.01
+# p_sentence_drop_tokens: 0.01

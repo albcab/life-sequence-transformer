@@ -7,8 +7,8 @@ defaults:
 
 _target_: src.dataloaders.datamodule.L2VDataModule
 
-batch_size: 8 #64 ###assuming 1 million params
-num_workers: 2 #8
+batch_size: 16 #64 ###assuming 1 million params
+num_workers: 4 #8
 
 ### If you want to train the model on subsets of data
 subset: False

@@ -6,10 +6,10 @@ defaults:
   - /callbacks
   
 #GENERAL
-version: 1.0
-implementation: "v1"
+version: 2.0
+implementation: "v2"
 comments: "clean"
-name: "pretraining_decoder"
+name: "pretraining_bigbird"
 model_name: "w2w"
 
 seed: 2024
@@ -39,7 +39,7 @@ model:
     decoder_layers: 4  # number of decoder blocks
     encoder_attention_heads: 4  # number of attention heads in the multiheadattention module
     decoder_attention_heads: 8  # number of attention heads in the multiheadattention module
-    hidden_act: "gelu"
+    hidden_act: "gelu_new"
 
     # hidden_ff: 2210
     # hidden_act: "swish"

@@ -140,10 +140,15 @@ class CorpusVocabulary(Vocabulary):
             {"TOKEN": [f"DUR_{i}" for i in range(1, 13)], "CATEGORY": "DURATION"}
         )
 
+        names = pd.DataFrame(
+            {"TOKEN": [source.name.upper() for source in self.corpus.sources], "CATEGORY": "NAMES"}
+        )
+
         ### IN THIS CASE, year only is PASSED AS TIME2VEC EMBEDDINGS AND HENCE NEED NOT THEIR OWN TOKEN
         ### WE COULD ALSO DO TIME2VEC FOR THE MONTHS, BUT IN INFERENCE THEY NEED TO COME FROM THE VOCAB
         vocab_parts = [general, background, month, 
                     #    year, 
+                       names,
                        duration]
 
         def sort_key(x: str) -> Tuple[Union[str, int], ...]:

@@ -53,6 +53,13 @@ class Background:
 
         return {"tokens": np.array([token2index.get(t) for t in tokens])}#, "month": token2index.get(month), "year": year}
 
+    @staticmethod
+    def get_sentence(x: Optional["Background"]) -> List[str]:
+        if x is None:
+            return 2 * ["[UNK]"]
+        else:
+            return [x.gender, x.area]
+        
 
 class EncodedDocument(Generic[_TaskT]):
     """Generic class for encoded documents. Each task can then type-hint their

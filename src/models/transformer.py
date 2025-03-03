@@ -8,9 +8,11 @@ import logging
 
 from transformers import (
   BertConfig,
+  BigBirdConfig,
   EncoderDecoderConfig,
   EncoderDecoderModel
 )
+from src.models.modules import EncoderLayer
 
 
 log = logging.getLogger(__name__)
@@ -25,43 +27,134 @@ ACT2FN = {
 }
 
 
+class Performer(nn.Module):
+    def __init__(self, hparams, decoder=False, with_background=True):
+        """Encoder part of the life2vec model (but with performer attention)"""
+        super(Performer, self).__init__()
+
+        self.hparams = hparams
+        # Initialize the Embedding Layer
+        self.embedding = Embeddings(hparams=hparams, with_background=with_background)
+        # Initialize the Encoder Blocks
+        self.encoders = nn.ModuleList(
+            [EncoderLayer(hparams) for _ in range(hparams.n_encoders)]
+        )
+        self.is_decoder = decoder
+        if self.is_decoder:
+            raise("Decoder not implemented")
+
+    ###PADDING_MASK COULD BE DECODER MASK?
+    def forward(self, x, padding_mask):
+        """Forward pass"""
+        x, _ = self.embedding(
+            tokens=x[:, 0], year=x[:, 1], age=x[:, 2]
+        )
+        for layer in self.encoders:
+            x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
+            x = layer(x, padding_mask)
+        return x
+
+    def forward_finetuning(self, x, padding_mask=None):
+
+        x, _ = self.embedding(
+            tokens=x[:, 0], year=x[:, 1], age=x[:, 2]
+        )
+
+        for _, layer in enumerate(self.encoders):
+            x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
+            x = layer(x, padding_mask)
+
+        return x
+    
+    def forward_finetuning_cls(self, x, padding_mask):
+        logits = list()
+        x, _ = self.embedding(
+            tokens=x[:, 0], year=x[:, 1], age=x[:, 2]
+        )
+        for i, layer in enumerate(self.encoders):
+            x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
+            x = layer(x, padding_mask)
+            if  i == (self.hparams.n_encoders - 1)//2 or i == 1 or i == (self.hparams.n_encoders - 1): ## we extract CLS embeddings after 0th and last encoder block and average those
+                logits.append(x[:, 0])
+        return x[:,0]
+        return torch.stack(logits, dim=0).mean(dim=0)
+
+    def forward_finetuning_with_embeddings(self, x, padding_mask):
+        ### Inputs are the embeddings (not sequence of tokens)
+        for _, layer in enumerate(self.encoders):
+            x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
+            x = layer(x, padding_mask)
+        return x
+
+    def forward_finetuning_with_embeddings_cls(self, x, padding_mask):
+        ### Inputs are the embeddings (not sequence of tokens)
+        logits = list()
+        for i, layer in enumerate(self.encoders):
+            x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
+            x = layer(x, padding_mask)
+            if  i == (self.hparams.n_encoders - 1)//2 or i == 1 or i == (self.hparams.n_encoders - 1): ## we extract CLS embeddings after 0th and last encoder block and average those
+                logits.append(x[:, 0])
+        return torch.stack(logits, dim=0).mean(dim=0)
+
+    def get_sequence_embedding(self, x):
+        """Get only embeddings"""
+        return self.embedding(
+            tokens=x[:, 0], year=x[:, 1], age=x[:, 2]
+        )
+
+    def redraw_projection_matrix(self, batch_idx: int):
+        """Redraw projection Matrices for each layer (only valid for Performer)"""
+        if batch_idx == -1:
+            log.info("Redrawing projections for the encoder layers (manually)")
+            for encoder in self.encoders:
+                encoder.redraw_projection_matrix()
+
+        elif batch_idx > 0 and batch_idx % self.hparams.feature_redraw_interval == 0:
+            log.info("Redrawing projections for the encoder layers")
+            for encoder in self.encoders:
+                encoder.redraw_projection_matrix()
+
+
 class Transformer(nn.Module):
     def __init__(self, hparams, decoder=False):
-        """Encoder part of the life2vec model"""
+        """Decoder/Encoder-Encoder part of the life2vec model"""
         super(Transformer, self).__init__()
 
         self.hparams = hparams
         # Initialize the Embedding Layer
         self.embedding = Embeddings(hparams=hparams)
         # Initialize the Encoder-Encoder Transformer
-        encoder_config = BertConfig(
+        encoder_config = BigBirdConfig(
             vocab_size=1,
             pad_token_id=0,
             hidden_size=hparams.hidden_size,
             num_hidden_layers=hparams.encoder_layers,
             num_attention_heads=hparams.encoder_attention_heads,
             intermediate_size=hparams.intermediate_size,
-            # hidden_act=ACT2FN[hparams.hidden_act],
             hidden_act=hparams.hidden_act,
             hidden_dropout_prob=hparams.fw_dropout,
             attention_probs_dropout_prob=hparams.att_dropout,
             max_position_embeddings=hparams.max_length,
-            position_embedding_type=None #Reflects the unordered nature of the tokens,Simpler architecture,Focus on the content
+            attention_type="original_full",
+            block_size=64, #default and irrelevant foor "original_full"
+            num_random_blocks=3, #default and irrelevant foor "original_full"
         )
-        decoder_config = BertConfig(
+        decoder_config = BigBirdConfig(
             vocab_size=1,
             pad_token_id=0,
             hidden_size=hparams.hidden_size,
             num_hidden_layers=hparams.decoder_layers,
             num_attention_heads=hparams.decoder_attention_heads,
             intermediate_size=hparams.intermediate_size,
-            # hidden_act=ACT2FN[hparams.hidden_act],
             hidden_act=hparams.hidden_act,
             hidden_dropout_prob=hparams.dc_dropout,
             attention_probs_dropout_prob=hparams.att_dropout,
             max_position_embeddings=hparams.max_length,
-            position_embedding_type='relative_key_query',
+            attention_type="original_full",
+            block_size=64, #default and irrelevant foor "original_full"
+            num_random_blocks=3, #default and irrelevant foor "original_full"
             is_decoder=decoder,
+            add_cross_attention=True,
         )
         config = EncoderDecoderConfig.from_encoder_decoder_configs(encoder_config, decoder_config)
         self.transformer = EncoderDecoderModel(config)

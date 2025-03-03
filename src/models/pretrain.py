@@ -9,7 +9,7 @@ import logging
 
 """Custom code"""
 from src.models.transformer_utils import ReZero
-from src.models.transformer import Transformer, MaskedLanguageModel, SOP_Decoder
+from src.models.transformer import Performer, Transformer, MaskedLanguageModel, SOP_Decoder
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class TransformerEncoder(pl.LightningModule):
         self.hparams.update(hparams)
         self.last_global_step = 0
         # 1. ENCODER-ENCODER/DECODER
-        self.transformer = Transformer(self.hparams, decoder=False)
+        self.transformer = Performer(self.hparams, decoder=False, with_background=True)
 
         # 2. DECODER BLOCK
         self.task = self.hparams.training_task
@@ -56,14 +56,12 @@ class TransformerEncoder(pl.LightningModule):
         # 1. ENCODER INPUT
         predicted = self.transformer(
             x=batch["input_ids"].long(),
-            z=batch["background_ids"],
-            decoder_attention_mask=batch["padding_mask"],
+            padding_mask=batch["padding_mask"].long()
         )
         # 2. MASKED LANGUAGE MODEL
         mlm_pred = self.mlm_decoder(predicted, batch)
         # 3. SEQUENCE ORDER PREDICTION Task
         # Embedding of the CLS token
-        ####USE ATTENTION DECODER, WHOLE SEQUENCE...
         sop_pred = self.sop_decoder(predicted[:, 0])
 
         return mlm_pred, sop_pred
@@ -100,13 +98,13 @@ class TransformerEncoder(pl.LightningModule):
         self.last_global_step = self.global_step
         seed_everything(self.hparams.seed + self.trainer.current_epoch)
 
-    # def on_train_epoch_end(self, *kwargs):
-    #     """On Train Epoch End: Redraw the projection of the Attention-related matrices"""
-    #     if self.hparams.attention_type == "performer":
-    #         self.transformer.redraw_projection_matrix(-1)
-    #     else:
-    #         raise NotImplementedError(
-    #             "We only have a Performer implementation.")
+    def on_train_epoch_end(self, *kwargs):
+        """On Train Epoch End: Redraw the projection of the Attention-related matrices"""
+        if self.hparams.attention_type == "performer":
+            self.transformer.redraw_projection_matrix(-1)
+        else:
+            raise NotImplementedError(
+                "We only have a Performer implementation.")
 
     def validation_step(self, batch, batch_idx):
         """Validation Step"""

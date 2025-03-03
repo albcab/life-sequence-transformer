@@ -36,7 +36,7 @@ def main(cfg):
     vocab = CorpusVocabulary(corpus, name=cfg.datamodule.vocabulary.name, min_token_count=cfg.datamodule.vocabulary.min_token_count)
     vocab.prepare()
 
-    if cfg.name == "pretraining_encoder":
+    if cfg.name == "pretraining_encoder" or cfg.name == "pretraining_performer":
         from src.dataloaders.tasks.pretrain import MLM
         task = MLM(name=cfg.datamodule.task.name, 
                     max_length=cfg.datamodule.task.max_length, 

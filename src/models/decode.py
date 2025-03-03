@@ -37,6 +37,7 @@ class TransformerDecoder(pl.LightningModule):
         predicted = self.transformer(
             x=batch["input_ids"].long(),
             z=batch["background_ids"],
+            decoder_attention_mask=batch["padding_mask"], #should be doing this by default
         )
 
         return predicted

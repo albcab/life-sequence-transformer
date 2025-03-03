@@ -119,10 +119,14 @@ class Task:
 
     def clip_document(self, document: PersonDocument) -> PersonDocument:
 
+        prefix_length = len(Background.get_sentence(
+            document.background)) + 1
+        max_sequence_length = self.max_length - prefix_length
+
         lengths = [sum([len(events) for events in year]) for year in document.lifeseq]
         clip_idx = None
         for i, x in enumerate(accumulate(reversed(lengths))): #delete whole years only, from last to first
-            if x >= self.max_length:
+            if x >= max_sequence_length:
                 clip_idx = i
                 break
 

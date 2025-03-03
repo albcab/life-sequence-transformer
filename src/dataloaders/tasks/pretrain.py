@@ -35,12 +35,18 @@ class MLM(Task):
 
     def encode_document(self, document: PersonDocument) -> "MLMEncodedDocument":
 
+        prefix_year = [
+            ["PLCH0"],
+            Background.get_sentence(document.background),
+            ["[BOL]"]
+        ]
+
         ############################################
         # SOP TASK
         document, targ_sop = self.sop_task(document)
         ############################################
     
-        lifeseq = [[["[BOL]"]]] + document.lifeseq
+        lifeseq = [prefix_year] + document.lifeseq
         year_lengths = [sum([len(event) for event in year]) for year in lifeseq]
         # event_lengths = [[len(event) for event in year] for year in lifeseq]
 
@@ -72,7 +78,6 @@ class MLM(Task):
 
         # print(flat_lifeseq[500:550])
         token_ids = np.array([token2index.get(x, unk_id) for x in flat_lifeseq])
-        background_ids = Background.get_background(document.background, token2index)
         masked_sentences, masked_indx, masked_tokens = self.mlm_mask(token_ids.copy())
 
         length = len(token_ids)
@@ -101,7 +106,6 @@ class MLM(Task):
 
         return MLMEncodedDocument(
             sequence_id=sequence_id,
-            background_ids=background_ids,
             input_ids=input_ids,
             padding_mask=padding_mask,
             target_tokens=masked_tokens,
@@ -166,7 +170,6 @@ class MLM(Task):
         num_tokens_to_mask = np.floor(
             n_tokens * self.mask_ratio).astype(np.int32)
         # firt 10% of tokens won't be changed
-        #MAYBE DELETE THIS?:::
         pos_unchange = np.floor(num_tokens_to_mask * 0.1).astype(np.int32)
         # last 10% of tokens would be random ; the rest will be changed
         pos_random = num_tokens_to_mask - pos_unchange
@@ -240,7 +243,6 @@ class MLM(Task):
 @dataclass
 class MLMEncodedDocument(EncodedDocument[MLM]):
     sequence_id: np.ndarray
-    background_ids: Dict[str, np.ndarray]
     input_ids: np.ndarray
     padding_mask: np.ndarray
     target_tokens: np.ndarray

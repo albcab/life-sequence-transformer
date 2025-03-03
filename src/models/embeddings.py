@@ -10,9 +10,10 @@ log = logging.getLogger(__name__)
 class Embeddings(nn.Module):
     """Class for token, position, segment and backgound embedding."""
 
-    def __init__(self, hparams):
+    def __init__(self, hparams, with_background=False):
         super(Embeddings, self).__init__()
         embedding_size = hparams.hidden_size
+        self.with_background = with_background
 
         # Initialize Token/Concept embedding matrix
         self.token = nn.Embedding(
@@ -49,8 +50,12 @@ class Embeddings(nn.Module):
 
     def parametrize(self, norm: bool = False):
         """Remove Mean from the Embedding Matrix (on each forward pass"""
-        ignore_index = torch.LongTensor(
-            [0, 5, 6, 7, 8, 9])  # We ignore the 5 tokens (PAD, and placeholder tokens that we included into the language but never used)
+        if self.with_background:
+            ignore_index = torch.LongTensor(
+                [0, 6, 7, 8, 9]) ###USE PLACEHOLDER0 AS CLS/BOS FOR SOP IN MODEL WITH BACKGROUND
+        else:
+            ignore_index = torch.LongTensor(
+                [0, 5, 6, 7, 8, 9])  # We ignore the 5 tokens (PAD, and placeholder tokens that we included into the language but never used)
 
         parametrize.register_parametrization(
             self.token, "weight", Center(ignore_index=ignore_index, norm=norm))
@@ -66,9 +71,17 @@ class Embeddings(nn.Module):
         tokens = self.token(tokens)
 
         pos = self.year(year.float().unsqueeze(-1))
+        if self.with_background:
+            pos[:, :4] *= 0
+        else:
+            pos[:, :1] *= 0
         tokens = self.res_year(tokens, pos)
 
         pos = self.age(age.float().unsqueeze(-1))
+        if self.with_background:
+            pos[:, :4] *= 0
+        else:
+            pos[:, :1] *= 0
         tokens = self.res_age(tokens, pos)
 
         return self.dropout(tokens), None

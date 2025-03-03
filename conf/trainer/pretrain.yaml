@@ -3,9 +3,9 @@ default_root_dir : ${local_path}/logs/
 fast_dev_run:  False
 min_epochs : 15
 max_epochs : 30
-accumulate_grad_batches: 8 #1
+accumulate_grad_batches: 4 #1
 reload_dataloaders_every_n_epochs : 5  
-precision: 32
+precision: "bf16-mixed"
 log_every_n_steps : 10 #1
 num_sanity_val_steps : False
 limit_train_batches : 1.0 #3000 ###would need to adjust the learning rate schedule

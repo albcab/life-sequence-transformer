@@ -1,5 +1,5 @@
 defaults:
-  - /data_new/corpus@corpus: puf_set
+  - /data_new/corpus@corpus: diff25_set
 
 _target_: src.dataloaders.vocabulary.CorpusVocabulary
 

@@ -126,7 +126,9 @@ class Binned(Field):
         :param x: :class:`dask.dataframe.DataFrame` with :attr:`field_label` column.
         """
         q = np.linspace(0.0, 1.0, self.n_bins - 1, endpoint=True)
-        quantiles = x[self.field_label].quantile(q=q).compute().tolist()
+        ###fuck it, dask quantile alg doesn't work, don't want to add new dependencies for tdigest, should have the RAM anyway
+        # quantiles = x[self.field_label].quantile(q=q).compute().tolist()
+        quantiles = np.nanquantile(x[self.field_label].compute(), q=q, method='linear').tolist()
         self.bins_ = quantiles
 
 

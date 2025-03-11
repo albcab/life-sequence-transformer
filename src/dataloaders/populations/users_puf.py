@@ -85,7 +85,7 @@ class UserMonthPopulation(Population):
             SEX=lambda x: x.SEX.fillna("[UNK]"),
             BIRTHDAY_MONTH=lambda x: dd.to_datetime(
                 x.BIRTHDAY_MONTH,
-                format="%d/%m/%Y",
+                # format="%d/%m/%Y",
                 errors="raise",
             ),
             aa_morte=lambda x: pd.NA, ### NO ANNO DI MORTE, CHANGE IF HAVE

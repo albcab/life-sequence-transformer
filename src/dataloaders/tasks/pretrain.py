@@ -162,7 +162,9 @@ class MLM(Task):
 
         unk_id = token2index["[UNK]"]
         mask_id = token2index["[MASK]"]
-        # sep_id = token2index["[SEP]"]
+        sep_id = token2index["[EOY]"]
+        end_id = token2index["[EOL]"]
+        beg_id = token2index["[BOL]"]
 
         # limit is length of an actual sequence
         n_tokens = len(token_ids)
@@ -175,8 +177,14 @@ class MLM(Task):
         pos_random = num_tokens_to_mask - pos_unchange
 
         # we do not mask SEP and UNK
-        legal_mask = token_ids[1:] != unk_id
+        legal_mask = (token_ids[1:] != sep_id) & (token_ids[1:] != unk_id) & (token_ids[1:] != end_id) & (token_ids[1:] != beg_id)
         legal_indx = np.arange(start=1, stop=n_tokens)[legal_mask]
+
+        if len(legal_indx) < num_tokens_to_mask:
+            num_tokens_to_mask = np.floor(len(legal_indx) * self.mask_ratio).astype(np.int32)
+            pos_unchange = np.floor(num_tokens_to_mask * 0.1).astype(np.int32)
+            pos_random = num_tokens_to_mask - pos_unchange
+            print([vocabulary.index2token.get(x, "[UNK]") for x in token_ids])
 
         indx_to_mask = np.random.choice(
             a=legal_indx, size=num_tokens_to_mask, replace=False

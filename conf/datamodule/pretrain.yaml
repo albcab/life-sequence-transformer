@@ -1,7 +1,7 @@
 defaults:
   # - /data_new/corpus@corpus: global_set
   # - /data_new/vocabulary@vocabulary: global_set
-  - /data_new/corpus@corpus: puf_set
+  - /data_new/corpus@corpus: diff25_set
   - /data_new/vocabulary@vocabulary: puf_set
   - /task@task: mlm #change hardcoded in base.py
 

@@ -3,7 +3,7 @@ defaults:
 
 _target_: src.dataloaders.vocabulary.CorpusVocabulary
 
-name: ${.corpus.name}
+name: ${.corpus.name}_fullback
 min_token_count: 0 #1000 
 # min_token_count_field:
 #   DIAG_999: 1000

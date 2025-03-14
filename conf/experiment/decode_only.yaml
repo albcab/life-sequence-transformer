@@ -1,7 +1,7 @@
 # @package _global_
 
 defaults:
-  - /datamodule: pretrain
+  - /datamodule: decode_only
   - /trainer: pretrain_noclip
   - /callbacks
   
@@ -9,7 +9,7 @@ defaults:
 version: 1.0
 implementation: "vdiff25_incomefix_fullback"
 comments: "more dimension, less attention"
-name: "pretraining_performer"
+name: "decoder_only"
 model_name: "w2v"
 
 seed: 2024
@@ -22,7 +22,7 @@ callbacks.checkpoint.dirpath: ${ckpt_path}
 ###########################
 ###################### MODEL
 model:
-  _target_: src.models.pretrain.TransformerEncoder
+  _target_: src.models.decode_only.TransformerDecoderOnly
   _convert_: all
   hparams:
     vocab_size: NULL #this needs to be set at runtime
@@ -80,7 +80,7 @@ trainer:
     - ${callbacks.lr_monitor}
     - ${callbacks.grad_norm_monitor}
     # - ${callbacks.silence_warnings}
-    - ${callbacks.text_collector}
+    # - ${callbacks.text_collector}
     - ${callbacks.embedding_collector}
     - ${callbacks.reseed_dataloader}
     - ${callbacks.save_weights}

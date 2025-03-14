@@ -72,14 +72,14 @@ class Embeddings(nn.Module):
 
         pos = self.year(year.float().unsqueeze(-1))
         if self.with_background:
-            pos[:, :4] *= 0
+            pos[:, :6] *= 0
         else:
             pos[:, :1] *= 0
         tokens = self.res_year(tokens, pos)
 
         pos = self.age(age.float().unsqueeze(-1))
         if self.with_background:
-            pos[:, :4] *= 0
+            pos[:, :6] *= 0
         else:
             pos[:, :1] *= 0
         tokens = self.res_age(tokens, pos)

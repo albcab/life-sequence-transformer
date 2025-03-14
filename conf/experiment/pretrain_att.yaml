@@ -7,7 +7,7 @@ defaults:
   
 #GENERAL
 version: 1.0
-implementation: "vdiff25_incomefix"
+implementation: "vdiff25_incomefix_fullback"
 comments: "less dimension, more attention"
 name: "pretraining"
 model_name: "w2v"

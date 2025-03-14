@@ -55,6 +55,15 @@ def main(cfg):
                     p_sequence_shuffle_tokens=cfg.datamodule.task.p_sequence_shuffle_tokens,
                     p_sentence_drop_tokens=cfg.datamodule.task.p_sentence_drop_tokens)
         
+    if cfg.name == "decoder_only":
+        from src.dataloaders.tasks.decode_only import DecodeOnly
+        task = DecodeOnly(name=cfg.datamodule.task.name,
+                    max_length=cfg.datamodule.task.max_length,
+                    p_sequence_reverse_events=cfg.datamodule.task.p_sequence_reverse_events,
+                    p_sequence_shuffle_events=cfg.datamodule.task.p_sequence_shuffle_events,
+                    p_sequence_shuffle_tokens=cfg.datamodule.task.p_sequence_shuffle_tokens,
+                    p_sentence_drop_tokens=cfg.datamodule.task.p_sentence_drop_tokens)
+        
     datamodule = L2VDataModule(corpus, task=task, vocabulary=vocab,
                                batch_size=cfg.datamodule.batch_size,
                                num_workers=cfg.datamodule.num_workers)

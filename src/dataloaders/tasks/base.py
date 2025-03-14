@@ -201,9 +201,10 @@ class Task:
             lifeseq[-1] = lifeseq[-1][:-1]
             monthseq[-1] = monthseq[-1][:-1]
 
-        # birthday_month = f"MONTH_{person_sentences.BIRTHDAY_MONTH.iloc[0].month}"
-        birthday_month = person_sentences.BIRTHDAY_MONTH.iloc[0] #if we do time2vec month in background
-        birthday_year = person_sentences.BIRTHDAY_YEAR.iloc[0]
+        birthday_month = f"MONTH_{person_sentences.BIRTHDAY_MONTH.iloc[0]}"
+        birthday_year = f"YEAR_{person_sentences.BIRTHDAY_YEAR.iloc[0]}"
+        # birthday_month = person_sentences.BIRTHDAY_MONTH.iloc[0] #if we do time2vec month in background
+        # birthday_year = person_sentences.BIRTHDAY_YEAR.iloc[0]
         sex = person_sentences.SEX.iloc[0]
         area = person_sentences.AREA.iloc[0]
 
@@ -217,8 +218,10 @@ class Task:
 
         background = Background(
             gender=sex,
-            birth_month=int(birthday_month),
-            birth_year=int(birthday_year),
+            birth_month=birthday_month,
+            birth_year=birthday_year,
+            # birth_month=int(birthday_month),
+            # birth_year=int(birthday_year),
             area=area,
         )
 

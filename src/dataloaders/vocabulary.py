@@ -112,7 +112,7 @@ class CorpusVocabulary(Vocabulary):
     background_tokens: List[str] = field(
         default_factory=lambda: ["F", "M", "A1", "A2", "A3", "A4", "A5", "A6"]
     )
-    year_range: Tuple[int, int] = (1945, 2020)  # inclusive
+    year_range: Tuple[int, int] = (1919, 1992)  # inclusive
     min_token_count: int = 0
     min_token_count_field: Dict[str, int] = field(default_factory=dict)
 
@@ -130,12 +130,12 @@ class CorpusVocabulary(Vocabulary):
         month = pd.DataFrame(
             {"TOKEN": [f"MONTH_{i}" for i in range(1, 13)], "CATEGORY": "MONTH"}
         )
-        # year = pd.DataFrame(
-        #     {
-        #         "TOKEN": [f"YEAR_{i}" for i in range(self.year_range[0], self.year_range[1] + 1)],
-        #         "CATEGORY": "YEAR",
-        #     }
-        # )
+        year = pd.DataFrame(
+            {
+                "TOKEN": [f"YEAR_{i}" for i in range(self.year_range[0], self.year_range[1] + 1)],
+                "CATEGORY": "YEAR",
+            }
+        )
         duration = pd.DataFrame(
             {"TOKEN": [f"DUR_{i}" for i in range(1, 13)], "CATEGORY": "DURATION"}
         )
@@ -147,7 +147,7 @@ class CorpusVocabulary(Vocabulary):
         ### IN THIS CASE, year only is PASSED AS TIME2VEC EMBEDDINGS AND HENCE NEED NOT THEIR OWN TOKEN
         ### WE COULD ALSO DO TIME2VEC FOR THE MONTHS, BUT IN INFERENCE THEY NEED TO COME FROM THE VOCAB
         vocab_parts = [general, background, month, 
-                    #    year, 
+                       year, 
                        names,
                        duration]
 

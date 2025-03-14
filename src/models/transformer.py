@@ -32,6 +32,8 @@ class Performer(nn.Module):
         """Encoder part of the life2vec model (but with performer attention)"""
         super(Performer, self).__init__()
 
+        hparams.is_decoder = decoder
+        
         self.hparams = hparams
         # Initialize the Embedding Layer
         self.embedding = Embeddings(hparams=hparams, with_background=with_background)
@@ -39,11 +41,7 @@ class Performer(nn.Module):
         self.encoders = nn.ModuleList(
             [EncoderLayer(hparams) for _ in range(hparams.n_encoders)]
         )
-        self.is_decoder = decoder
-        if self.is_decoder:
-            raise("Decoder not implemented")
 
-    ###PADDING_MASK COULD BE DECODER MASK?
     def forward(self, x, padding_mask):
         """Forward pass"""
         x, _ = self.embedding(
@@ -268,7 +266,7 @@ class Transformer(nn.Module):
 class MaskedLanguageModel(nn.Module):
     """Masked Language Model (MLM) Decoder (for pretraining)"""
 
-    def __init__(self, hparams, embedding, act: str = "tanh"):
+    def __init__(self, hparams, embedding, act: str = "tanh", with_background=True):
         super(MaskedLanguageModel, self).__init__()
         self.hparams = hparams
         self.act = ACT2FN[act]
@@ -290,7 +288,10 @@ class MaskedLanguageModel(nn.Module):
                 self.out.weight = embedding.token.weight
 
         if self.hparams.parametrize_emb:
-            ignore_index = torch.LongTensor([0, 5, 6, 7, 8, 9])
+            if with_background:
+                ignore_index = torch.LongTensor([0, 6, 7, 8, 9])
+            else:
+                ignore_index = torch.LongTensor([0, 5, 6, 7, 8, 9])
             log.info("(MLM Decoder) centering: true normalisation: %s" %
                      hparams.norm_output_emb)
             parametrize.register_parametrization(self.out, "weight", Center(
@@ -391,4 +392,37 @@ class AttentionDecoder(nn.Module):
     def forward(self, x, mask):
         logits = self.dropout(self.norm(self.act(self.ff(x))))
         logits = self.identity(self.attention_pooling(x = logits, mask = mask))
+        return self.out(logits)
+
+
+class NextTokenDecoder(nn.Module):
+    """Next Token Decoder for last layer of EncDec or decoder only"""
+
+    def __init__(self, hparams, embedding, with_background=True):
+        super(NextTokenDecoder, self).__init__()
+        self.hparams = hparams
+        self.out = nn.Linear(
+            self.hparams.hidden_size,
+            self.hparams.vocab_size,
+            bias=False
+        )
+        if self.hparams.weight_tying == "wt":
+            log.info("MLM decoder WITH Wight Tying")
+            try:
+                self.out.weight = embedding.token.parametrizations.weight.original
+            except:
+                log.warning("MLM decoder parametrization failed")
+                self.out.weight = embedding.token.weight
+
+        if self.hparams.parametrize_emb:
+            if with_background:
+                ignore_index = torch.LongTensor([0, 6, 7, 8, 9])
+            else:
+                ignore_index = torch.LongTensor([0, 5, 6, 7, 8, 9])
+            log.info("Decoder centering: true normalisation: %s" %
+                     hparams.norm_output_emb)
+            parametrize.register_parametrization(self.out, "weight", Center(
+                ignore_index=ignore_index, norm=hparams.norm_output_emb))
+
+    def forward(self, logits):
         return self.out(logits)

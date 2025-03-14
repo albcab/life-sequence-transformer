@@ -42,12 +42,12 @@ class Background:
         """
 
         if x is None:
-            tokens = 2 * ["[UNK]"]
+            tokens = 4 * ["[UNK]"]
             # month = "[UNK]"
             # month = np.array(0.)
             # year = np.array(0.)
         else:
-            tokens = [x.gender, x.area]
+            tokens = [x.gender, x.birth_month, x.birth_year, x.area]
             # month = x.birth_month
             # year = np.array(x.birth_year)
 
@@ -56,9 +56,9 @@ class Background:
     @staticmethod
     def get_sentence(x: Optional["Background"]) -> List[str]:
         if x is None:
-            return 2 * ["[UNK]"]
+            return 4 * ["[UNK]"]
         else:
-            return [x.gender, x.area]
+            return [x.gender, x.birth_month, x.birth_year, x.area]
         
 
 class EncodedDocument(Generic[_TaskT]):

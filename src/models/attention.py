@@ -45,7 +45,7 @@ class MultiHeadAttention(nn.Module):
                 heads=self.head_num,
                 nb_features=hparams.num_random_features,
                 dim_head=hparams.hidden_size // self.head_num,
-                causal=False,
+                causal=hparams.is_decoder,
                 generalized_attention=False,
                 no_projection=False,
                 dropout=dropout,

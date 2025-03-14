@@ -279,8 +279,8 @@ class L2VDataModule(pl.LightningDataModule):
 
     @property
     def dataset_root(self) -> Path:
-        """Return the dataset root according to the corpus and task names"""
-        return DATA_ROOT / "processed" / "datasets" / self.corpus.name / self.task.name
+        """Return the dataset root according to the vocabulary and task names"""
+        return DATA_ROOT / "processed" / "datasets" / self.vocabulary.name / self.task.name
 
     def prepare(self) -> None:
         """Calls :meth:`prepare_data` to prepare the data."""

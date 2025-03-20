@@ -12,7 +12,7 @@ from transformers import (
   EncoderDecoderConfig,
   EncoderDecoderModel
 )
-from src.models.modules import EncoderLayer
+from src.models.modules import EncoderLayer, DecoderLayer
 
 
 log = logging.getLogger(__name__)
@@ -114,117 +114,65 @@ class Performer(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, hparams, decoder=False):
-        """Decoder/Encoder-Encoder part of the life2vec model"""
+    def __init__(self, hparams, num_cross_decoder=2, with_background=False):
+        """Encoder-Decoder version of the life2vec model"""
         super(Transformer, self).__init__()
 
+        hparams.is_decoder = True
         self.hparams = hparams
+        self.num_cross_decoder = num_cross_decoder
         # Initialize the Embedding Layer
-        self.embedding = Embeddings(hparams=hparams)
-        # Initialize the Encoder-Encoder Transformer
-        encoder_config = BigBirdConfig(
-            vocab_size=1,
-            pad_token_id=0,
-            hidden_size=hparams.hidden_size,
-            num_hidden_layers=hparams.encoder_layers,
-            num_attention_heads=hparams.encoder_attention_heads,
-            intermediate_size=hparams.intermediate_size,
-            hidden_act=hparams.hidden_act,
-            hidden_dropout_prob=hparams.fw_dropout,
-            attention_probs_dropout_prob=hparams.att_dropout,
-            max_position_embeddings=hparams.max_length,
-            attention_type="original_full",
-            block_size=64, #default and irrelevant foor "original_full"
-            num_random_blocks=3, #default and irrelevant foor "original_full"
+        self.embedding = Embeddings(hparams=hparams, with_background=with_background)
+        # Initialize the Decoder
+        self.decoders = nn.ModuleList(
+            [DecoderLayer(hparams) for _ in range(num_cross_decoder)] +
+            [EncoderLayer(hparams) for _ in range(hparams.n_decoders - num_cross_decoder)]
         )
-        decoder_config = BigBirdConfig(
-            vocab_size=1,
-            pad_token_id=0,
-            hidden_size=hparams.hidden_size,
-            num_hidden_layers=hparams.decoder_layers,
-            num_attention_heads=hparams.decoder_attention_heads,
-            intermediate_size=hparams.intermediate_size,
-            hidden_act=hparams.hidden_act,
-            hidden_dropout_prob=hparams.dc_dropout,
-            attention_probs_dropout_prob=hparams.att_dropout,
-            max_position_embeddings=hparams.max_length,
-            attention_type="original_full",
-            block_size=64, #default and irrelevant foor "original_full"
-            num_random_blocks=3, #default and irrelevant foor "original_full"
-            is_decoder=decoder,
-            add_cross_attention=True,
+        # Initialize the Encoder (change hparams to encoder hparams, bit hacky but dont want to change Perfomer code)
+        hparams.hidden_ff = hparams.encoder_hidden_ff
+        hparams.hidden_act = hparams.encoder_hidden_act
+        hparams.n_heads = hparams.encoder_n_heads
+        hparams.num_random_features = hparams.encoder_num_random_features
+        hparams.is_decoder = False
+        self.encoders = nn.ModuleList(
+            [EncoderLayer(hparams) for _ in range(hparams.n_encoders)]
         )
-        config = EncoderDecoderConfig.from_encoder_decoder_configs(encoder_config, decoder_config)
-        self.transformer = EncoderDecoderModel(config)
-        self.transformer.config.decoder.is_decoder = decoder #should be enough for an encoder-decoder model?
-        self.is_decoder = decoder
-        self.transformer.config.decoder.add_cross_attention = True
-
-        self.out_layer = nn.Linear(hparams.hidden_size, hparams.vocab_size, bias=False)
+        true_tensor = torch.tensor([True])
+        self.background_padding_mask = true_tensor.repeat(hparams.batch_size, 4)
 
     def encode(self, z):
-        z_emb = self.embedding.forward_indep(z['tokens'].long())#, z['year'].long(), z['month'].long())
-        out = self.transformer.encoder(inputs_embeds=z_emb, output_hidden_states=True)
-        encoder_hidden = out.hidden_states[-1]
-        return encoder_hidden
+        z = self.embedding.forward_indep(z['tokens'].long())#, z['year'].long(), z['month'].long())
+        for layer in self.encoders:
+            z = layer(z, mask=self.background_padding_mask)
+        return z
 
-    def decode(self, x, encoder_hidden_states=None, decoder_attention_mask=None):
-        seq_len = x.size(2)
+    def decode(self, x, encoder_hidden_states=None, padding_mask=None):
 
         # Shape of x_emb: (batch_size, seq_len, d_model)
-        x_emb, _ = self.embedding(tokens=x[:, 0], year=x[:, 1], age=x[:, 2])
+        x, _ = self.embedding(tokens=x[:, 0], year=x[:, 1], age=x[:, 2])
 
-        # # Add latent embedding to input embeddings
-        # if bar_ids is not None:
-        #   assert bar_ids.max() <= encoder_hidden.size(1)
-        #   embs = torch.cat([torch.zeros(x.size(0), 1, self.d_model, device=self.device), encoder_hidden], dim=1)
-        #   offset = (seq_len * torch.arange(bar_ids.size(0), device=self.device)).unsqueeze(1)
-        #   # Use bar_ids to gather encoder hidden states s.t. latent_emb[i, j] == encoder_hidden[i, bar_ids[i, j]]
-        #   latent_emb = F.embedding((bar_ids + offset).view(-1), embs.view(-1, self.d_model)).view(x_emb.shape)
-        #   x_emb += latent_emb
-
-        if encoder_hidden_states is not None:
-            # Make x_emb and encoder_hidden_states match in sequence length. Necessary for relative positional embeddings
-            padded = pad_sequence([x_emb.transpose(0, 1), encoder_hidden_states.transpose(0, 1)], batch_first=True)
-            x_emb, encoder_hidden_states = padded.transpose(1, 2)
-
-            if self.is_decoder:
-                out = self.transformer.decoder(
-                    inputs_embeds=x_emb, 
-                    encoder_hidden_states=encoder_hidden_states, 
-                    output_hidden_states=True
-                )
+        for i, layer in enumerate(self.decoders):
+            x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
+            if i < self.num_cross_decoder:
+                x = layer(x, context=encoder_hidden_states, mask=padding_mask)
             else:
-                out = self.transformer.decoder(
-                    inputs_embeds=x_emb, 
-                    encoder_hidden_states=encoder_hidden_states, 
-                    output_hidden_states=True,
-                    attention_mask=decoder_attention_mask
-                )
-            hidden = out.hidden_states[-1][:, :seq_len]
-        else:
-            out = self.transformer.decoder(inputs_embeds=x_emb, output_hidden_states=True)
-            hidden = out.hidden_states[-1][:, :seq_len]
+                x = layer(x, mask=padding_mask)
 
         # Shape of logits: (batch_size, seq_len, tuple_size, vocab_size)
-
-        if not self.is_decoder:
-            return hidden
-        else:
-            return self.out_layer(hidden)
+        return x
 
 
-    def forward(self, x, z=None, decoder_attention_mask=None):
+    def forward(self, x, z=None, padding_mask=None):
         encoder_hidden = self.encode(z)
 
-        out = self.decode(x, encoder_hidden_states=encoder_hidden, decoder_attention_mask=decoder_attention_mask)
+        out = self.decode(x, encoder_hidden_states=encoder_hidden, padding_mask=padding_mask)
 
         return out
     
-    def forward_bol(self, x, z, decoder_attention_mask=None):
+    def forward_bol(self, x, z, padding_mask=None):
         encoder_hidden = self.encode(z)
 
-        x = self.decode(x, encoder_hidden_states=encoder_hidden, decoder_attention_mask=decoder_attention_mask)
+        x = self.decode(x, encoder_hidden_states=encoder_hidden, padding_mask=padding_mask)
         return x[:,0]
 
     # def forward_finetuning_with_embeddings(self, x, padding_mask):
@@ -250,17 +198,21 @@ class Transformer(nn.Module):
             tokens=x[:, 0], year=x[:, 1], age=x[:, 2]
         )
 
-    # def redraw_projection_matrix(self, batch_idx: int):
-    #     """Redraw projection Matrices for each layer (only valid for Performer)"""
-    #     if batch_idx == -1:
-    #         log.info("Redrawing projections for the encoder layers (manually)")
-    #         for encoder in self.encoders:
-    #             encoder.redraw_projection_matrix()
+    def redraw_projection_matrix(self, batch_idx: int):
+        """Redraw projection Matrices for each layer (only valid for Performer)"""
+        if batch_idx == -1:
+            log.info("Redrawing projections for the encoder and decoder layers (manually)")
+            for encoder in self.encoders:
+                encoder.redraw_projection_matrix()
+            for decoder in self.decoders:
+                decoder.redraw_projection_matrix()
 
-    #     elif batch_idx > 0 and batch_idx % self.hparams.feature_redraw_interval == 0:
-    #         log.info("Redrawing projections for the encoder layers")
-    #         for encoder in self.encoders:
-    #             encoder.redraw_projection_matrix()
+        elif batch_idx > 0 and batch_idx % self.hparams.feature_redraw_interval == 0:
+            log.info("Redrawing projections for the encoder and decoder layers")
+            for encoder in self.encoders:
+                encoder.redraw_projection_matrix()
+            for decoder in self.decoders:
+                decoder.redraw_projection_matrix()
 
 
 class MaskedLanguageModel(nn.Module):

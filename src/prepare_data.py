@@ -46,7 +46,7 @@ def main(cfg):
                     p_sentence_drop_tokens=cfg.datamodule.task.p_sentence_drop_tokens,
                     mask_ratio=cfg.datamodule.task.mask_ratio)
     
-    if cfg.name == "pretraining_decoder":
+    if cfg.name == "pretraining_decoder" or cfg.name == "encoder_decoder_performer":
         from src.dataloaders.tasks.decode import Decode
         task = Decode(name=cfg.datamodule.task.name, 
                     max_length=cfg.datamodule.task.max_length,

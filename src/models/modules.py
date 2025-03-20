@@ -1,6 +1,6 @@
 import torch.nn as nn
 import time
-from src.models.attention import MultiHeadAttention
+from src.models.attention import MultiHeadAttention, MultiHeadCrossAttention
 from src.models.transformer_utils import ACT2FN, ReZero
 import logging
 
@@ -63,7 +63,7 @@ class PositionWiseFeedForward(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    """Encoder Block"""
+    """Encoder/Decoder Block for Encoder/Decoder-only architecture or Encoder block for Encoder-Decoder architecture"""
 
     def __init__(self, hparams):
         """"""
@@ -103,5 +103,59 @@ class EncoderLayer(nn.Module):
         """Forward Pass"""
         x = self.attention_sublayer(x, sublayer=self.attention, mask=mask)
         x = self.position_sublayer(x, sublayer=self.position_wise)
+
+        return x
+
+
+class DecoderLayer(nn.Module):
+    """Decoder Block for an Encoder-Decoder architecture"""
+
+    def __init__(self, hparams):
+        """"""
+        super(DecoderLayer, self).__init__()
+
+        assert (
+            hparams.hidden_size % hparams.n_heads == 0
+        ), "Encoder: Incorrect hidden_size (%s, %s)" % (
+            hparams.hidden_size,
+            hparams.n_heads,
+        )
+        start = time.time()
+
+        self.attention = MultiHeadAttention(hparams)
+        self.attention_sublayer = SublayerConnection(hparams)
+
+        self.position_wise = PositionWiseFeedForward(hparams)
+        self.position_sublayer = SublayerConnection(hparams)
+
+        self.cross_attention = MultiHeadCrossAttention(hparams)
+        self.cross_attention_sublayer = SublayerConnection(hparams)
+
+        self.cross_position_wise = PositionWiseFeedForward(hparams)
+        self.cross_position_sublayer = SublayerConnection(hparams)
+
+        log.info("DecoderLayer setup is finised:  %.3f s" %
+                 (time.time() - start))
+
+    def redraw_projection_matrix(self):
+        """Redraw projection matrices during the training"""
+        try:
+            try:
+                self.attention.attention.fast_attention.redraw_projection_matrix(
+                    "cuda")
+            except:
+                self.attention.attention.fast_attention.redraw_projection_matrix(
+                    "cpu")
+        except:
+            log.warning(
+                "Cannot redraw random projections. Wrong attention type")
+
+    def forward(self, x, context, mask=None, context_mask=None):
+        """Forward Pass"""
+        x = self.attention_sublayer(x, sublayer=self.attention, mask=mask)
+        x = self.position_sublayer(x, sublayer=self.position_wise)
+
+        x = self.cross_attention_sublayer(x, sublayer=self.cross_attention, context=context, mask=mask, context_mask=context_mask)
+        x = self.cross_position_sublayer(x, sublayer=self.cross_position_wise)
 
         return x

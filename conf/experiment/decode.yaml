@@ -2,14 +2,14 @@
 
 defaults:
   - /datamodule: decode
-  - /trainer: pretrain
+  - /trainer: pretrain_noclip
   - /callbacks
   
 #GENERAL
-version: 2.0
-implementation: "v2"
-comments: "clean"
-name: "pretraining_bigbird"
+version: 1.0
+implementation: "vdiff25_incomefix_fullback"
+comments: "less dimension, more attention"
+name: "encoder_decoder_performer"
 model_name: "w2w"
 
 seed: 2024
@@ -33,22 +33,23 @@ model:
     accumulate_grad_batches: ${trainer.accumulate_grad_batches}
     seed: ${seed}
 
-    hidden_size: 96 #280
-    intermediate_size: 128  # size of the position-wise feed-forward layer
-    encoder_layers: 2  # number of encoder blocks
-    decoder_layers: 4  # number of decoder blocks
-    encoder_attention_heads: 4  # number of attention heads in the multiheadattention module
-    decoder_attention_heads: 8  # number of attention heads in the multiheadattention module
-    hidden_act: "gelu_new"
+    #DECODER PARAMS
+    hidden_size: 256 #280 (needs to be divisible by n_heads)
+    hidden_ff: 1280 #2210
+    hidden_act: "swish"
+    n_decoders: 6
+    n_heads: 8
+    n_local: 7
+    local_window_size: 32
 
-    # hidden_ff: 2210
-    # hidden_act: "swish"
-    # n_encoders: 5
-    # n_heads: 10
-    # n_local: 7
-    # local_window_size: 38
+    #ENCODER PARAMS
+    encoder_hidden_ff: 1280 #2210
+    encoder_hidden_act: "swish"
+    n_encoders: 1
+    encoder_n_heads: 2
+    encoder_num_random_features: 64
 
-    # norm_type: "rezero"
+    norm_type: "rezero"
     att_dropout: 0.1 ## Attention Layers
     fw_dropout: 0.1 ## Positionwise Layers
     dc_dropout: 0.1 ## Decoder Layer
@@ -62,12 +63,12 @@ model:
     experiment_name: ${name}_${model_name}
     experiment_version: ${version} 
     # ## ATTENTION
-    # attention_type: "performer"
-    # multihead_dc: False
-    # num_random_features: 436
+    attention_type: "performer"
+    multihead_dc: False
+    num_random_features: 432
 
     # From trainer args..
-    learning_rate: 1.e-3 #5.e-3
+    learning_rate: 5.e-3 #5.e-3
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
@@ -81,7 +82,7 @@ model:
 
 trainer:
   accelerator: 'gpu'
-  devices: 2 #[7]
+  devices: 1 #[7]
   callbacks:
     - ${callbacks.checkpoint}
     - ${callbacks.lr_monitor}

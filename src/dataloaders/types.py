@@ -51,7 +51,9 @@ class Background:
             # month = x.birth_month
             # year = np.array(x.birth_year)
 
-        return {"tokens": np.array([token2index.get(t) for t in tokens])}#, "month": token2index.get(month), "year": year}
+        unk_id = token2index["[UNK]"]
+
+        return {"tokens": np.array([token2index.get(t, unk_id) for t in tokens])}#, "month": token2index.get(month), "year": year}
 
     @staticmethod
     def get_sentence(x: Optional["Background"]) -> List[str]:

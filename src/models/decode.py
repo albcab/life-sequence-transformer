@@ -9,7 +9,7 @@ import logging
 
 """Custom code"""
 from src.models.transformer_utils import ReZero
-from src.models.transformer import Transformer, MaskedLanguageModel, SOP_Decoder
+from src.models.transformer import Transformer, MaskedLanguageModel, SOP_Decoder, NextTokenDecoder
 
 log = logging.getLogger(__name__)
 
@@ -21,13 +21,14 @@ class TransformerDecoder(pl.LightningModule):
         self.hparams.update(hparams)
         self.last_global_step = 0
         # 1. ENCODER-DECODER
-        self.transformer = Transformer(self.hparams, decoder=True)
+        self.transformer = Transformer(self.hparams, with_background=False)
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=0)
         self.num_outputs = self.hparams.vocab_size
 
         # 2. META PARAM
         self.task = self.hparams.training_task
         log.info("Training task: %s" % self.task)
+        self.decoder = NextTokenDecoder(self.hparams, self.transformer.embedding, with_background=False)
         
         # 3. METRICS
         self.init_metrics()
@@ -37,10 +38,11 @@ class TransformerDecoder(pl.LightningModule):
         predicted = self.transformer(
             x=batch["input_ids"].long(),
             z=batch["background_ids"],
-            decoder_attention_mask=batch["padding_mask"], #should be doing this by default
+            padding_mask=batch["padding_mask"],
         )
+        nxt_pred = self.decoder(predicted)
 
-        return predicted
+        return nxt_pred
 
     def training_step(self, batch, batch_idx):
         """Training Step"""
@@ -69,13 +71,13 @@ class TransformerDecoder(pl.LightningModule):
         self.last_global_step = self.global_step
         seed_everything(self.hparams.seed + self.trainer.current_epoch)
 
-    # def on_train_epoch_end(self, *kwargs):
-    #     """On Train Epoch End: Redraw the projection of the Attention-related matrices"""
-    #     if self.hparams.attention_type == "performer":
-    #         self.transformer.redraw_projection_matrix(-1)
-    #     else:
-    #         raise NotImplementedError(
-    #             "We only have a Performer implementation.")
+    def on_train_epoch_end(self, *kwargs):
+        """On Train Epoch End: Redraw the projection of the Attention-related matrices"""
+        if self.hparams.attention_type == "performer":
+            self.transformer.redraw_projection_matrix(-1)
+        else:
+            raise NotImplementedError(
+                "We only have a Performer implementation.")
 
     def validation_step(self, batch, batch_idx):
         """Validation Step"""

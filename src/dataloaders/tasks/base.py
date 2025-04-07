@@ -177,6 +177,8 @@ class Task:
             lifeseq[ey - first_year].append([f"MONTH_{sm}"] + sentence + [f"DUR_{em - sm + 1}"])
             monthseq[ey - first_year].append(sm)
         for life_year in lifeseq:
+            if len(life_year) == 0:
+                life_year.append(["MONTH_1", "DUR_12"])
             life_year.append(["[EOY]"])
         for month_year in monthseq:
             month_year.append(0)

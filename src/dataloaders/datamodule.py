@@ -122,7 +122,8 @@ class Corpus:
         #     lambda x: pd.to_datetime(x, errors='coerce'), meta=('BIRTHDAY_MONTH', 'datetime64[ns]'))
 
         combined_sentences["AGE"] = combined_sentences["START_MONTH"].dt.year - combined_sentences["BIRTHDAY_MONTH"].dt.year
-        combined_sentences["BIRTHDAY_YEAR"] = combined_sentences["BIRTHDAY_MONTH"].dt.year - self.reference_year
+        #BIRTHDAY_YEAR should not be standardized
+        combined_sentences["BIRTHDAY_YEAR"] = combined_sentences["BIRTHDAY_MONTH"].dt.year
         combined_sentences["BIRTHDAY_MONTH"] = combined_sentences["BIRTHDAY_MONTH"].dt.month - self.reference_month
 
         combined_sentences["START_YEAR"] = combined_sentences["START_MONTH"].dt.year - self.reference_year
@@ -168,8 +169,7 @@ class Corpus:
         :attr:`source.fields` in the transformed tokenized data concatenated as strings.
         """
         tokenized = self.tokenized_and_transformed(source)
-        # tokenized = source.tokenized()
-        tokenized['name'] = source.name.upper()
+        # tokenized['name'] = source.name.upper()
         field_labels = source.field_labels()
 
         import pandas.api.types as ptypes
@@ -189,7 +189,7 @@ class Corpus:
         # It is a bit akwkard that we join, then split right after.
         # However it is easier to deal with strings, I think
         sentences = tokenized.astype({x: "string" for x in field_labels}).assign(
-            SENTENCE=concat_columns_dask(tokenized, columns=["name"] + list(field_labels))
+            SENTENCE=concat_columns_dask(tokenized, columns=list(field_labels))
         )[cols]
 
         assert isinstance(sentences, dd.DataFrame)

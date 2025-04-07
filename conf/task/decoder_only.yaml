@@ -4,9 +4,9 @@ name: decoder_only
 max_length: 1560
 
 # Augmentation
-p_sequence_reverse_events: 0.1
-p_sequence_shuffle_events: 0.1
-p_sequence_shuffle_tokens: 0.1
+p_sequence_reverse_events: 0.2
+p_sequence_shuffle_events: 0.2
+p_sequence_shuffle_tokens: 0.0
 p_sentence_drop_tokens: 0.01
 
 # p_sequence_timecut: 0.0

@@ -125,7 +125,7 @@ class TransformerDecoderOnly(pl.LightningModule):
             "bias",
             "norm",
             "age",
-            "abspos",
+            "year",
             "token",
             "decoder.g"
         ]

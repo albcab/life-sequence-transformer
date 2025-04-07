@@ -17,7 +17,7 @@ import logging
 
 #need to be even
 MIN_HIDDEN_SIZE, MAX_HIDDEN_SIZE = 256, 1024
-MIN_FF_SIZE, MAX_FF_SIZE = 256, 2560
+MIN_FF_SIZE, MAX_FF_SIZE = 512, 2560
 MIN_ENCODER_LAYERS, MAX_ENCODER_LAYERS = 2, 24
 MIN_LOCAL_LAYERS, MAX_LOCAL_LAYERS = 4, 16
 MIN_WINDOW_SIZE, MAX_WINDOW_SIZE = 16, 64
@@ -26,13 +26,13 @@ MIN_RAND_FEATURES, MAX_RAND_FEATURES = 128, 1024
 MAX_ENCODER_HEADS = 20
 
 STARTING_CONFIG = {
-    "hidden_size": 256,
-    "hidden_ff": 1280,
-    "n_encoders": 8,
-    "n_heads": 8,
-    "n_local": 7,
-    "local_window_size": 32,
-    "num_random_features": 432,
+    "hidden_size": 704,
+    "hidden_ff": 1008,
+    # "n_encoders": 8,
+    # "n_heads": 8,
+    # "n_local": 7,
+    # "local_window_size": 32,
+    # "num_random_features": 432,
 }
 
 # HOME_PATH = str(Path())
@@ -72,10 +72,10 @@ def tune_hyperparameters(config, cfg, data):
     print("I AM HERE")
     cfg.model.hparams.hidden_size = config["hidden_size"]
     cfg.model.hparams.hidden_ff = config["hidden_ff"]
-    cfg.model.hparams.n_encoders = config["n_encoders"]
-    cfg.model.hparams.n_heads = config["n_heads"]
-    cfg.model.hparams.n_local = config["n_local"]
-    cfg.model.hparams.local_window_size = config["local_window_size"]
+    # cfg.model.hparams.n_encoders = config["n_encoders"]
+    # cfg.model.hparams.n_heads = config["n_heads"]
+    # cfg.model.hparams.n_local = config["n_local"]
+    # cfg.model.hparams.local_window_size = config["local_window_size"]
     #cfg.model.hparams.learning_rate = config["learning_rate"]
     #cfg.model.hparams.weight_decay = config["weight_decay"]
 
@@ -86,6 +86,7 @@ def tune_hyperparameters(config, cfg, data):
                                                   "recall": "val/recall",
                                                   "val/precision": "val/precision",
                                                   "cls_f1": "val/cls_f1"},
+                                                  save_checkpoints=False,
                                                   on="validation_end")
 
     print("ALL good here")
@@ -93,7 +94,7 @@ def tune_hyperparameters(config, cfg, data):
     trainer = Trainer(callbacks=[tune_callback, ReseedTrainDataLoader()], 
                       accelerator=cfg.trainer['accelerator'], 
                       devices=cfg.trainer['devices'],
-                      precision="bf16-mixed",
+                      precision=cfg.trainer['precision'],
                       #default_root_dir = cfg.trainer["default_root_dir"],
                       max_epochs = 6,
                       accumulate_grad_batches=cfg.trainer['accumulate_grad_batches'],
@@ -109,17 +110,17 @@ def tune_hyperparameters(config, cfg, data):
     trainer.fit(model, data)
 
 def define_by_run_func(trial):
-    hidden_size = trial.suggest_int("hidden_size", MIN_HIDDEN_SIZE, MAX_HIDDEN_SIZE, step=2)
-    trial.suggest_int("n_heads", 2, MAX_ENCODER_HEADS, step=2)
-    # trial.suggest_categorical("n_heads",
-    #     [i for i in range(2, MAX_ENCODER_HEADS + 1) if hidden_size % i == 0])
-    trial.suggest_int("local_window_size", MIN_WINDOW_SIZE, MAX_WINDOW_SIZE, step=2)
-    # trial.suggest_categorical("local_window_size",
-    #     [i for i in range(2, MAX_DECODER_HEADS + 1) if hidden_size % i == 0])
+    hidden_size = trial.suggest_int("hidden_size", MIN_HIDDEN_SIZE, MAX_HIDDEN_SIZE, step=8)
+    # trial.suggest_int("n_heads", 2, MAX_ENCODER_HEADS, step=2)
+    # # trial.suggest_categorical("n_heads",
+    # #     [i for i in range(2, MAX_ENCODER_HEADS + 1) if hidden_size % i == 0])
+    # trial.suggest_int("local_window_size", MIN_WINDOW_SIZE, MAX_WINDOW_SIZE, step=2)
+    # # trial.suggest_categorical("local_window_size",
+    # #     [i for i in range(2, MAX_DECODER_HEADS + 1) if hidden_size % i == 0])
     trial.suggest_int("hidden_ff", MIN_FF_SIZE, MAX_FF_SIZE, step=16)
-    trial.suggest_int("n_encoders", MIN_ENCODER_LAYERS, MAX_ENCODER_LAYERS)
-    trial.suggest_int("n_local", MIN_LOCAL_LAYERS, MAX_LOCAL_LAYERS)
-    trial.suggest_int("num_random_features", MIN_RAND_FEATURES, MAX_RAND_FEATURES, step=16)
+    # trial.suggest_int("n_encoders", MIN_ENCODER_LAYERS, MAX_ENCODER_LAYERS)
+    # trial.suggest_int("n_local", MIN_LOCAL_LAYERS, MAX_LOCAL_LAYERS)
+    # trial.suggest_int("num_random_features", MIN_RAND_FEATURES, MAX_RAND_FEATURES, step=16)
     return {}
 
 
@@ -133,16 +134,16 @@ def main(cfg):
     ##GLOBAL SEED
     seed_everything(cfg.seed)
     ray.init(num_cpus=4, num_gpus=1)
-    ray_config = {"hidden_size": tune.qrandint(MIN_HIDDEN_SIZE, MAX_HIDDEN_SIZE, 2),
-                  "n_heads": tune.sample_from(
-                      lambda spec: tune.choice([i for i in range(2, MAX_ENCODER_HEADS + 1) if spec.config.hidden_size % i == 0])
-                  ),
-                  "local_window_size": tune.sample_from(
-                      lambda spec: tune.choice([i for i in range(MIN_WINDOW_SIZE, MAX_WINDOW_SIZE + 1) if spec.config.hidden_size % i == 0])
-                  ),
+    ray_config = {"hidden_size": tune.qrandint(MIN_HIDDEN_SIZE, MAX_HIDDEN_SIZE, 8),
+                #   "n_heads": tune.sample_from(
+                #       lambda spec: tune.choice([i for i in range(2, MAX_ENCODER_HEADS + 1) if spec.config.hidden_size % i == 0])
+                #   ),
+                #   "local_window_size": tune.sample_from(
+                #       lambda spec: tune.choice([i for i in range(MIN_WINDOW_SIZE, MAX_WINDOW_SIZE + 1) if spec.config.hidden_size % i == 0])
+                #   ),
                   "hidden_ff": tune.qrandint(MIN_FF_SIZE, MAX_FF_SIZE, 16),
-                  "n_encoders": tune.randint(MIN_ENCODER_LAYERS, MAX_ENCODER_LAYERS), #   "n_heads": tune.choice([2, 4, 8, 16]),
-                  "n_local": tune.randint(MIN_LOCAL_LAYERS, MAX_LOCAL_LAYERS), #   "local_window_size": tune.choice([4, 8, 12, 16]),
+                #   "n_encoders": tune.randint(MIN_ENCODER_LAYERS, MAX_ENCODER_LAYERS), #   "n_heads": tune.choice([2, 4, 8, 16]),
+                #   "n_local": tune.randint(MIN_LOCAL_LAYERS, MAX_LOCAL_LAYERS), #   "local_window_size": tune.choice([4, 8, 12, 16]),
 
                 #   "learning_rate": tune.loguniform(1e-4, 1e-2), #or tune.loguniform(1e-5, 5e-4) for finetuning
                 #   "weight_decay": tune.loguniform(1e-5, 1e-1)

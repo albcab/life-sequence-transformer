@@ -1,8 +1,8 @@
 defaults:
-  # - /data_new/corpus@corpus: global_set
-  # - /data_new/vocabulary@vocabulary: global_set
-  - /data_new/corpus@corpus: diff25_set
-  - /data_new/vocabulary@vocabulary: puf_set
+  # - /data_new/corpus@corpus: diff25_set
+  # - /data_new/vocabulary@vocabulary: puf_set
+  - /data_new/corpus@corpus: no12_set
+  - /data_new/vocabulary@vocabulary: no12_set
   - /task@task: decoder #change hardcoded in base.py
 
 _target_: src.dataloaders.datamodule.L2VDataModule

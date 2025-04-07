@@ -2,14 +2,14 @@
 
 defaults:
   - /datamodule: decode_only
-  - /trainer: pretrain_noclip
+  - /trainer: decode_noclip
   - /callbacks
   
 #GENERAL
 version: 1.0
-implementation: "vdiff25_incomefix_fullback"
-comments: "more dimension, less attention"
-name: "decoder_only"
+implementation: "vno12"
+comments: "less feed forward, more dimension"
+name: "decoder_only_dim"
 model_name: "w2v"
 
 seed: 2024
@@ -33,13 +33,13 @@ model:
     accumulate_grad_batches: ${trainer.accumulate_grad_batches}
     seed: ${seed}
 
-    hidden_size: 700 #280 (needs to be divisible by n_heads)
-    hidden_ff: 1008 #2210
+    hidden_size: 640 #280 (needs to be divisible by n_heads)
+    hidden_ff: 1120 #2210
     hidden_act: "swish"
     n_encoders: 8
-    n_heads: 4
+    n_heads: 8
     n_local: 6
-    local_window_size: 16
+    local_window_size: 36
 
     norm_type: "rezero"
     att_dropout: 0.1 ## Attention Layers
@@ -57,17 +57,17 @@ model:
     # ## ATTENTION
     attention_type: "performer"
     multihead_dc: False
-    num_random_features: 128
+    num_random_features: 256
 
     # From trainer args..
-    learning_rate: 3.e-3 #1.e-3
+    learning_rate: 5.e-3 #1.e-3
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
 
     cls_num_targs: 3
 
-    epsilon: 1.e-8 #1.e-6
+    epsilon: 1.e-6 #1.e-6
     stage: ${stage}
     implementation: ${implementation}
     version: ${version}

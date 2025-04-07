@@ -26,14 +26,16 @@ def set_monthly_intensity(spell_duration):
 def set_puf_intensity(intensity, prefix):
     # if intensity < 0 or intensity > 56:
     #     raise f"intensity out of bounds={intensity}"
-    if intensity < 1:
+    if intensity <= 0:
         ity = "S0"
-    elif intensity < 2:
+    elif intensity <= 1:
         ity = "S1"
-    elif intensity < 3:
+    elif intensity <= 2:
         ity = "S2"
-    elif intensity < 4:
+    elif intensity <= 3:
         ity = "S3"
+    elif intensity <= 4:
+        ity = "S4"
     else:
         ity = "S4+"
     return prefix + "INT_" + ity
@@ -128,7 +130,10 @@ class Binned(Field):
         q = np.linspace(0.0, 1.0, self.n_bins - 1, endpoint=True)
         ###fuck it, dask quantile alg doesn't work, don't want to add new dependencies for tdigest, should have the RAM anyway
         # quantiles = x[self.field_label].quantile(q=q).compute().tolist()
-        quantiles = np.nanquantile(x[self.field_label].compute(), q=q, method='linear').tolist()
+        data = x[self.field_label].compute()
+        eps = 1e-3
+        jitter = np.random.default_rng(41).uniform(-eps, eps, data.shape[0])
+        quantiles = np.nanquantile(data + jitter, q=q, method='linear').tolist()
         self.bins_ = quantiles
 
 

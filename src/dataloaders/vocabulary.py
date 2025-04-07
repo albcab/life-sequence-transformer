@@ -112,7 +112,7 @@ class CorpusVocabulary(Vocabulary):
     background_tokens: List[str] = field(
         default_factory=lambda: ["F", "M", "A1", "A2", "A3", "A4", "A5", "A6"]
     )
-    year_range: Tuple[int, int] = (1919, 1992)  # inclusive
+    year_range: Tuple[int, int] = (1913, 1998)  # inclusive
     min_token_count: int = 0
     min_token_count_field: Dict[str, int] = field(default_factory=dict)
 
@@ -148,7 +148,7 @@ class CorpusVocabulary(Vocabulary):
         ### WE COULD ALSO DO TIME2VEC FOR THE MONTHS, BUT IN INFERENCE THEY NEED TO COME FROM THE VOCAB
         vocab_parts = [general, background, month, 
                        year, 
-                       names,
+                    #    names,
                        duration]
 
         def sort_key(x: str) -> Tuple[Union[str, int], ...]:

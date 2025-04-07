@@ -1,0 +1,6 @@
+defaults:
+  - /data_new/sources
+
+_target_: src.dataloaders.populations.users_puf.UserMonthPopulation
+name: users_no12
+#full dataset but restricted to ~1.8M obs

@@ -132,6 +132,8 @@ class Transformer(nn.Module):
         hparams.hidden_ff = hparams.encoder_hidden_ff
         hparams.hidden_act = hparams.encoder_hidden_act
         hparams.n_heads = hparams.encoder_n_heads
+        hparams.n_local = hparams.encoder_n_local
+        hparams.local_window_size = hparams.encoder_local_window_size
         hparams.num_random_features = hparams.encoder_num_random_features
         hparams.is_decoder = False
         self.encoders = nn.ModuleList(

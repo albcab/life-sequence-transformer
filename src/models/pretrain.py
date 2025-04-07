@@ -163,7 +163,7 @@ class TransformerEncoder(pl.LightningModule):
             "bias",
             "norm",
             "age",
-            "abspos",
+            "year",
             "token",
             "decoder.g"
         ]

@@ -1,0 +1,13 @@
+defaults:
+  - /data_new/sources
+  - /data_new/population@population: no12_set
+
+_target_: src.dataloaders.datamodule.Corpus
+
+name: labor_no12_perc1
+reference_year: 1989
+threshold_year: 2015 #WILL SET THE END OF THE SEQUENCE FOR ALL SEQUENCES!
+threshold_month: 12
+
+sources:
+  - ${data_new.sources.labour}

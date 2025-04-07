@@ -23,17 +23,17 @@ class LaborMonthSource(TokenSource):
     name: str = "labor"
     fields: List[FIELD_TYPE] = field(
         default_factory=lambda: [
+            "TIPOEPISODIO",
             # Binned("INCOME_MONTH", prefix="INCOME", n_bins=300),
             Binned("INCOME_MONTH_ADJ", prefix="INCOME", n_bins=300),
+            "WRK_TITLE",
+            "WRK_PROVINCE",
+            "ATECO",
             "FIRM_SIZE",
             "PTIME",
-            "WRK_PROVINCE",
-            "WRK_TITLE",
-            "ATECO",
-            "TIPOEPISODIO",
             "INTENSITY_WORK",
-            "INTENSITY_MATERNITY",
-            "INTENSITY_SICK"]
+            "INTENSITY_SICK",
+            "INTENSITY_MATERNITY"]
     )
     input_csv: Path = DATA_ROOT / "rawdata" / "labour_puf.csv"
     latest_end_date: str = "01/01/2100"

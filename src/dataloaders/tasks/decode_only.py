@@ -66,7 +66,8 @@ class DecodeOnly(Task):
         length = len(input_sentences)
 
         target_tokens = np.zeros(self.max_length)
-        target_tokens[:length] = token_ids[1:].copy()
+        ### ignore targets for background tokens:
+        target_tokens[5:length] = token_ids[6:].copy()
 
         # print(flat_lifeseq)
         # print(token_ids)

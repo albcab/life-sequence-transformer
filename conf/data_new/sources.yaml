@@ -7,7 +7,7 @@ health:
   # downsample: False
 
 # Labour
-labour:
+labour_:
   _target_: src.dataloaders.sources.labor_month.LaborMonthSource
   name: labor
   subsidized: False
@@ -34,6 +34,12 @@ sublabour:
 
 # Labour PUF
 labour_puf:
+  _target_: src.dataloaders.sources.labor_puf.LaborMonthSource
+  name: labor
+  # downsample: False
+
+# Labour no tipo 12
+labour:
   _target_: src.dataloaders.sources.labor_puf.LaborMonthSource
   name: labor
   # downsample: False

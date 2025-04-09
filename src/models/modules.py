@@ -1,7 +1,7 @@
 import torch.nn as nn
 import time
 from src.models.attention import MultiHeadAttention, MultiHeadCrossAttention
-from src.models.transformer_utils import ACT2FN, ReZero
+from src.models.transformer_utils import ACT2FN, ReZero, DyT
 import logging
 
 log = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ class SublayerConnection(nn.Module):
     ):
         """"""
         super(SublayerConnection, self).__init__()
-        assert hparams.norm_type in ["pre_norm", "rezero"]
+        assert hparams.norm_type in ["pre_norm", "rezero", "rms", "dtanh"]
 
         self.norm_type = hparams.norm_type
         hidden_size = hparams.hidden_size
@@ -26,6 +26,13 @@ class SublayerConnection(nn.Module):
             self.norm = ReZero(hidden_size)
         elif self.norm_type == "pre_norm":
             raise NotImplementedError("PRE NORM is not implemented")
+        elif self.norm_type == "rms":
+            self.norm = nn.RMSNorm(hidden_size)
+            self.gate = lambda x, y: x + y
+            # self.gate = ReZero(hidden_size)
+        elif self.norm_type == "dtanh":
+            self.norm = DyT(hidden_size)
+            self.gate = lambda x, y: x + y
 
     def forward(self, x, sublayer, **kwargs):
         """
@@ -36,7 +43,7 @@ class SublayerConnection(nn.Module):
             ReZero
             """
             return self.norm(x, sublayer(x, **kwargs))
-        elif self.norm_type == "pre_norm":
+        elif self.norm_type == "pre_norm" or self.norm_type == "rms" or self.norm_type == "dtanh":
             """
             PRE NORM (ScaleNorm + Gate)
             """

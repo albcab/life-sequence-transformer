@@ -136,6 +136,21 @@ class ReZero(torch.nn.Module):
         return x + y * self.weights
 
 
+class DyT(nn.Module):
+    """Implementation of Dynamic Tanh (DyT) as a drop-in replacement for normalization layers"""
+
+    def __init__(self, hidden_size, init_a=0.5):
+        super(DyT, self).__init__()
+
+        self.alpha = torch.nn.Parameter(torch.ones(1) * init_a)
+        self.gamma = torch.nn.Parameter(torch.ones(hidden_size))
+        self.beta = torch.nn.Parameter(torch.zeros(hidden_size))
+
+    def forward(self, x):
+        x = torch.tanh(self.alpha * x)
+        return self.gamma * x + self.beta
+
+
 class ScaleNorm(torch.nn.Module):
     """L2-norm (Alternative to LayerNorm)"""
 

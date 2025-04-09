@@ -47,7 +47,7 @@ class Background:
             # month = np.array(0.)
             # year = np.array(0.)
         else:
-            tokens = [x.gender, x.birth_month, x.birth_year, x.area]
+            tokens = [x.area, x.gender, x.birth_month, x.birth_year]
             # month = x.birth_month
             # year = np.array(x.birth_year)
 
@@ -60,7 +60,7 @@ class Background:
         if x is None:
             return 4 * ["[UNK]"]
         else:
-            return [x.gender, x.birth_month, x.birth_year, x.area]
+            return [x.area, x.gender, x.birth_month, x.birth_year]
         
 
 class EncodedDocument(Generic[_TaskT]):

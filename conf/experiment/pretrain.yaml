@@ -6,9 +6,9 @@ defaults:
   - /callbacks
   
 #GENERAL
-version: 1.0
-implementation: "vno12"
-comments: "less feed forward, more dimension"
+version: 2.0
+implementation: "vno12_norm"
+comments: "less dimension, more layers"
 name: "pretraining_dim"
 model_name: "w2v"
 
@@ -33,22 +33,22 @@ model:
     accumulate_grad_batches: ${trainer.accumulate_grad_batches}
     seed: ${seed}
 
-    hidden_size: 640 #280 (needs to be divisible by n_heads)
-    hidden_ff: 1120 #2210
+    hidden_size: 160 #280 (needs to be divisible by n_heads)
+    hidden_ff: 640 #2210
     hidden_act: "swish"
-    n_encoders: 8
-    n_heads: 8
-    n_local: 6
+    n_encoders: 14
+    n_heads: 5
+    n_local: 3
     local_window_size: 36
 
-    norm_type: "rezero"
+    norm_type: "rms"
     att_dropout: 0.1 ## Attention Layers
     fw_dropout: 0.1 ## Positionwise Layers
     dc_dropout: 0.1 ## Decoder Layer
     emb_dropout: 0.1 ## Embedding dropout
     parametrize_emb: True
     norm_input_emb: False
-    norm_output_emb: True
+    norm_output_emb: False
     weight_tying: "wt"
     ## TASK AND LOGS
     training_task: ${datamodule.task.name} # name of the task [mlm, simple]
@@ -64,6 +64,7 @@ model:
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
+    pct_start: 0.15 #0.05
 
     cls_num_targs: 3
 

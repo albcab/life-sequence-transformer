@@ -22,7 +22,7 @@ class DecodeOnly(Task):
     def encode_document(self, document: PersonDocument) -> "DecoderDocument":
 
         prefix_year = [
-            ["PLCH0"],
+            ["[PLCH0]"],
             Background.get_sentence(document.background),
             ["[BOL]"]
         ]

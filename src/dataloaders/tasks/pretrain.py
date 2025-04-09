@@ -36,7 +36,7 @@ class MLM(Task):
     def encode_document(self, document: PersonDocument) -> "MLMEncodedDocument":
 
         prefix_year = [
-            ["PLCH0"],
+            ["[PLCH0]"],
             Background.get_sentence(document.background),
             ["[BOL]"]
         ]

@@ -167,7 +167,7 @@ class TransformerDecoder(pl.LightningModule):
                 "scheduler": torch.optim.lr_scheduler.OneCycleLR(
                     optimizer, max_lr=self.hparams.learning_rate,
                     epochs=self.hparams.num_epochs, steps_per_epoch=self.hparams.n_users // eff_batch_size + (self.hparams.n_users % eff_batch_size > 0),
-                    three_phase=False, pct_start=0.05, max_momentum=self.hparams.beta1,
+                    three_phase=False, pct_start=self.hparams.pct_start, max_momentum=self.hparams.beta1,
                     div_factor=30
                 ),
                 "interval": "step",

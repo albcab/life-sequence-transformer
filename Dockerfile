@@ -4,7 +4,7 @@
 # FROM nvidia/cuda:12.5.1-runtime-ubuntu24.04
 
 
-FROM albcab/whip:gpus
+FROM albcab/whip:gpu
 
 # ENV CUDA_HOME=/usr/local/cuda-12.4
 # RUN add-apt-repository ppa:deadsnakes/ppa && \

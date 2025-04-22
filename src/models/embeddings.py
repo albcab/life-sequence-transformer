@@ -28,6 +28,10 @@ class Embeddings(nn.Module):
         self.age = PositionalEmbedding(1, hparams.hidden_size, torch.cos)
         self.year = PositionalEmbedding(1, hparams.hidden_size, torch.sin)
 
+        self.pos_emb = FixedPositionalEmbedding(hparams.hidden_size, hparams.max_length)
+        dim_head = hparams.hidden_size // hparams.n_heads
+        self.layer_pos_emb = FixedPositionalEmbedding(dim_head, hparams.max_length)
+
         # Uniformly initialise the weights of the embedding matrix
         d = 0.01
         nn.init.uniform_(self.token.weight, a=-d, b=d)
@@ -46,6 +50,8 @@ class Embeddings(nn.Module):
         # # self.res_age = lambda t, m: t + m
         self.res_year = ReZero(hparams.hidden_size, simple=True, fill=0)
         # self.res_year = lambda t, y: t + y
+        self.res_pos = ReZero(hparams.hidden_size, simple=True, fill=0)
+        # self.res_pos = lambda t, y: t + y
         self.dropout = nn.Dropout(hparams.emb_dropout)
 
     def parametrize(self, norm: bool = False):
@@ -84,7 +90,13 @@ class Embeddings(nn.Module):
             pos[:, :1] *= 0
         tokens = self.res_age(tokens, pos)
 
-        return self.dropout(tokens), None
+        pos = self.pos_emb(tokens)
+        tokens = self.res_pos(tokens, pos)
+
+        tokens = self.dropout(tokens)
+        layer_pos_emb = self.layer_pos_emb(tokens)
+
+        return tokens, layer_pos_emb
     
     def forward_indep(self, tokens):#, year, month):
         """"""
@@ -132,3 +144,18 @@ class PositionalEmbedding(nn.Module):
 
     def forward(self, tau):
         return t2v(tau, self.f, self.w, self.b, self.w0, self.b0)
+
+
+# sinusoidal positional embeddings
+
+class FixedPositionalEmbedding(nn.Module):
+    def __init__(self, dim, max_seq_len, base=10000):
+        super().__init__()
+        inv_freq = 1. / (base ** (torch.arange(0, dim, 2).float() / dim))
+        position = torch.arange(0, max_seq_len, dtype=torch.float)
+        sinusoid_inp = torch.einsum("i,j->ij", position, inv_freq)
+        emb = torch.cat((sinusoid_inp.sin(), sinusoid_inp.cos()), dim=-1)
+        self.register_buffer('emb', emb)
+
+    def forward(self, x):
+        return self.emb[None, :x.shape[1], :].to(x)

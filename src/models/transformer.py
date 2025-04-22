@@ -44,52 +44,52 @@ class Performer(nn.Module):
 
     def forward(self, x, padding_mask):
         """Forward pass"""
-        x, _ = self.embedding(
+        x, pos_emb = self.embedding(
             tokens=x[:, 0], year=x[:, 1], age=x[:, 2]
         )
         for layer in self.encoders:
             x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
-            x = layer(x, padding_mask)
+            x = layer(x, pos_emb=pos_emb, mask=padding_mask)
         return x
 
     def forward_finetuning(self, x, padding_mask=None):
 
-        x, _ = self.embedding(
+        x, pos_emb = self.embedding(
             tokens=x[:, 0], year=x[:, 1], age=x[:, 2]
         )
 
         for _, layer in enumerate(self.encoders):
             x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
-            x = layer(x, padding_mask)
+            x = layer(x, pos_emb=pos_emb, mask=padding_mask)
 
         return x
     
     def forward_finetuning_cls(self, x, padding_mask):
         logits = list()
-        x, _ = self.embedding(
+        x, pos_emb = self.embedding(
             tokens=x[:, 0], year=x[:, 1], age=x[:, 2]
         )
         for i, layer in enumerate(self.encoders):
             x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
-            x = layer(x, padding_mask)
+            x = layer(x, pos_emb=pos_emb, mask=padding_mask)
             if  i == (self.hparams.n_encoders - 1)//2 or i == 1 or i == (self.hparams.n_encoders - 1): ## we extract CLS embeddings after 0th and last encoder block and average those
                 logits.append(x[:, 0])
         return x[:,0]
         return torch.stack(logits, dim=0).mean(dim=0)
 
-    def forward_finetuning_with_embeddings(self, x, padding_mask):
+    def forward_finetuning_with_embeddings(self, x, pos_emb, padding_mask):
         ### Inputs are the embeddings (not sequence of tokens)
         for _, layer in enumerate(self.encoders):
             x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
-            x = layer(x, padding_mask)
+            x = layer(x, pos_emb=pos_emb, mask=padding_mask)
         return x
 
-    def forward_finetuning_with_embeddings_cls(self, x, padding_mask):
+    def forward_finetuning_with_embeddings_cls(self, x, pos_emb, padding_mask):
         ### Inputs are the embeddings (not sequence of tokens)
         logits = list()
         for i, layer in enumerate(self.encoders):
             x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
-            x = layer(x, padding_mask)
+            x = layer(x, pos_emb=pos_emb, mask=padding_mask)
             if  i == (self.hparams.n_encoders - 1)//2 or i == 1 or i == (self.hparams.n_encoders - 1): ## we extract CLS embeddings after 0th and last encoder block and average those
                 logits.append(x[:, 0])
         return torch.stack(logits, dim=0).mean(dim=0)
@@ -151,14 +151,14 @@ class Transformer(nn.Module):
     def decode(self, x, encoder_hidden_states=None, padding_mask=None):
 
         # Shape of x_emb: (batch_size, seq_len, d_model)
-        x, _ = self.embedding(tokens=x[:, 0], year=x[:, 1], age=x[:, 2])
+        x, pos_emb = self.embedding(tokens=x[:, 0], year=x[:, 1], age=x[:, 2])
 
         for i, layer in enumerate(self.decoders):
             x = torch.einsum("bsh, bs -> bsh", x, padding_mask)
             if i < self.num_cross_decoder:
-                x = layer(x, context=encoder_hidden_states, mask=padding_mask)
+                x = layer(x, context=encoder_hidden_states, mask=padding_mask, pos_emb=pos_emb)
             else:
-                x = layer(x, mask=padding_mask)
+                x = layer(x, mask=padding_mask, pos_emb=pos_emb)
 
         # Shape of logits: (batch_size, seq_len, tuple_size, vocab_size)
         return x

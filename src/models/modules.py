@@ -106,9 +106,9 @@ class EncoderLayer(nn.Module):
             log.warning(
                 "Cannot redraw random projections. Wrong attention type")
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, pos_emb=None):
         """Forward Pass"""
-        x = self.attention_sublayer(x, sublayer=self.attention, mask=mask)
+        x = self.attention_sublayer(x, sublayer=self.attention, mask=mask, pos_emb=pos_emb)
         x = self.position_sublayer(x, sublayer=self.position_wise)
 
         return x
@@ -157,9 +157,9 @@ class DecoderLayer(nn.Module):
             log.warning(
                 "Cannot redraw random projections. Wrong attention type")
 
-    def forward(self, x, context, mask=None, context_mask=None):
+    def forward(self, x, context, mask=None, context_mask=None, pos_emb=None):
         """Forward Pass"""
-        x = self.attention_sublayer(x, sublayer=self.attention, mask=mask)
+        x = self.attention_sublayer(x, sublayer=self.attention, mask=mask, pos_emb=pos_emb)
         x = self.position_sublayer(x, sublayer=self.position_wise)
 
         x = self.cross_attention_sublayer(x, sublayer=self.cross_attention, context=context, mask=mask, context_mask=context_mask)

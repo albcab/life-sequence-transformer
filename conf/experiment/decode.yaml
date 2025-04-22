@@ -7,7 +7,7 @@ defaults:
   
 #GENERAL
 version: 1.0
-implementation: "vno12_norm"
+implementation: "vno12_norm_pos"
 comments: "less feed forward, more dimension"
 name: "decoder_dim"
 model_name: "w2w"
@@ -37,7 +37,7 @@ model:
     hidden_size: 320 #280 (needs to be divisible by n_heads)
     hidden_ff: 1280 #2210
     hidden_act: "swish"
-    n_encoders: 7
+    n_decoders: 6
     n_heads: 8
     n_local: 6
     local_window_size: 36
@@ -70,11 +70,11 @@ model:
     num_random_features: 256
 
     # From trainer args..
-    learning_rate: 5.e-3 #5.e-3
+    learning_rate: 5.e-4 #1.e-3
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
-    pct_start: 0.15 #0.05
+    pct_start: 0.30 #0.05
 
     cls_num_targs: 3
 
@@ -91,7 +91,7 @@ trainer:
     - ${callbacks.lr_monitor}
     - ${callbacks.grad_norm_monitor}
     # - ${callbacks.silence_warnings}
-    # - ${callbacks.text_collector}
+    - ${callbacks.text_collector}
     - ${callbacks.embedding_collector}
     - ${callbacks.reseed_dataloader}
     - ${callbacks.save_weights}

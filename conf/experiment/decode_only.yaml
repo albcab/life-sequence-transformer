@@ -7,7 +7,7 @@ defaults:
   
 #GENERAL
 version: 1.0
-implementation: "vno12_norm"
+implementation: "vno12_norm_pos"
 comments: "less feed forward, more dimension"
 name: "decoder_only_dim"
 model_name: "w2v"
@@ -81,7 +81,7 @@ trainer:
     - ${callbacks.lr_monitor}
     - ${callbacks.grad_norm_monitor}
     # - ${callbacks.silence_warnings}
-    # - ${callbacks.text_collector}
+    - ${callbacks.text_collector}
     - ${callbacks.embedding_collector}
     - ${callbacks.reseed_dataloader}
     - ${callbacks.save_weights}

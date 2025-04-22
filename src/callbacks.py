@@ -21,6 +21,7 @@ import math
 import random
 
 from src.models.transformer_utils import SigSoftmax
+from src.models.pretrain import TransformerEncoder
 from pytorch_lightning.utilities import grad_norm
 
 
@@ -337,12 +338,18 @@ class TextCollector(pl.Callback):
         self.num_samples_per_epoch = num_samples_per_epoch
 
     def on_train_batch_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", batch: Any, batch_idx: int) -> None:
-        self.collect(name = "train", trainer= trainer, pl_module = pl_module, batch = batch, batch_idx = batch_idx)
+        if isinstance(pl_module, TransformerEncoder):
+            self.collect(name = "train", trainer= trainer, pl_module = pl_module, batch = batch, batch_idx = batch_idx)
+        else:
+            self.collect_decoder(name = "train", trainer= trainer, pl_module = pl_module, batch = batch, batch_idx = batch_idx)
         return super().on_train_batch_start(trainer, pl_module, batch, batch_idx)
 
 
     def on_validation_batch_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule", batch: Any, batch_idx: int) -> None:
-        self.collect(name = "val", trainer= trainer, pl_module = pl_module, batch = batch, batch_idx = batch_idx)
+        if isinstance(pl_module, TransformerEncoder):
+            self.collect(name = "val", trainer= trainer, pl_module = pl_module, batch = batch, batch_idx = batch_idx)
+        else:
+            self.collect_decoder(name = "val", trainer= trainer, pl_module = pl_module, batch = batch, batch_idx = batch_idx)
         return super().on_validation_batch_start(trainer, pl_module, batch, batch_idx)
 
 
@@ -392,11 +399,49 @@ class TextCollector(pl.Callback):
                         + "<>"
                         + indx2token[masked_sequence[i]] 
                         + ">>"
-                        + indx2token[
-                            predictions[np.where(i == target_pos)[0].tolist()[0]]
-                    ]
-                    + "***"
+                        + indx2token[predictions[np.where(i == target_pos)[0].tolist()[0]]]
+                        + "***"
                         for i, token in enumerate(original_sequence[:end_of_sequence])
+                    ]
+                ),
+                global_step=trainer.current_epoch,
+            )
+
+    def collect_decoder(self, name: str, trainer, pl_module, batch, batch_idx,):
+        IDX = 0
+        #indx2token = pl_module.idx2token
+        indx2token = trainer.datamodule.vocabulary.index2token
+        if batch_idx < self.num_samples_per_epoch:
+            
+
+            original_sequence = batch["original_sequence"][IDX].long().tolist()
+            abspos = batch["input_ids"][IDX][1].long().tolist()
+            age = batch["input_ids"][IDX][2].long().tolist()
+            predictions = [0] + torch.argmax(pl_module.forward(batch)[IDX], dim = 1).long().tolist()
+            sequence_id = batch["sequence_id"][IDX].long().detach().tolist()
+            target_tokens = [0] + batch["target_tokens"][IDX].long().tolist()
+
+            try:
+                end_of_sequence = original_sequence.index(0)
+            except:
+                end_of_sequence = len(original_sequence)
+
+            trainer.logger.experiment.add_text(
+                "%s/processed_sequences<O,P>" %name,
+                "(%s) " % sequence_id +
+
+                " | ".join(
+                    [
+                        indx2token[token] + " (%s, %s) " % (abspos[i], age[i])
+                        if not target_tokens[i]
+                        # else indx2token[token]
+                        # + ">>"
+                        # + indx2token[pred_token]
+                        # + " (%s, %s) " % (abspos[i], age[i])
+                        else (f"***{indx2token[token]}>>{indx2token[pred_token]}*** ({abspos[i]}, {age[i]}) "
+                              if indx2token[token] == indx2token[pred_token]
+                              else f"{indx2token[token]}>>{indx2token[pred_token]} ({abspos[i]}, {age[i]}) ")
+                        for i, (token, pred_token) in enumerate(zip(original_sequence[:end_of_sequence], predictions[:end_of_sequence+1]))
                     ]
                 ),
                 global_step=trainer.current_epoch,

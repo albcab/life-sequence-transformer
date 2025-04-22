@@ -1,6 +1,6 @@
 from performer_pytorch import SelfAttention, CrossAttention
 from performer_pytorch import performer_pytorch
-from performer_pytorch.performer_pytorch import default, exists, rearrange, empty
+from performer_pytorch.performer_pytorch import default, exists, rearrange, empty, apply_rotary_pos_emb
 import logging
 import torch
 
@@ -64,9 +64,8 @@ class CustomSelfAttention(SelfAttention):
                 global_mask = context_mask[:, None, :, None]
                 v.masked_fill_(~global_mask, 0.)
 
-            # OUR EDITS TO THE PACKAGE
-            # if exists(pos_emb) and not cross_attend:
-            #    q, k = apply_rotary_pos_emb(q, k, pos_emb)
+            if exists(pos_emb) and not cross_attend:
+               q, k = apply_rotary_pos_emb(q, k, pos_emb)
 
             out = self.fast_attention(q, k, v)
             attn_outs.append(out)

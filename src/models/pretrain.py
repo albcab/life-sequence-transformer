@@ -165,6 +165,8 @@ class TransformerEncoder(pl.LightningModule):
             "age",
             "year",
             "token",
+            "pos_emb",
+            "layer_pos_emb",
             "decoder.g"
         ]
 

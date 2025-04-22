@@ -7,7 +7,7 @@ defaults:
   
 #GENERAL
 version: 1.0
-implementation: "vno12_norm"
+implementation: "vno12_norm_pos"
 comments: "less dimension, more feed forward"
 name: "pretraining_ff"
 model_name: "w2v"
@@ -60,11 +60,11 @@ model:
     num_random_features: 256
 
     # From trainer args..
-    learning_rate: 5.e-3 #1.e-3
+    learning_rate: 1.e-3 #1.e-3
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
-    pct_start: 0.15 #0.05
+    pct_start: 0.30 #0.05
 
     cls_num_targs: 3
 

@@ -7,7 +7,7 @@ defaults:
   
 #GENERAL
 version: 2.0
-implementation: "vno12_norm"
+implementation: "vno12_norm_pos"
 comments: "less dimension, more layers"
 name: "pretraining_dim"
 model_name: "w2v"

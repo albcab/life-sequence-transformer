@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from .tasks.base import Task, collate_encoded_documents
 from .sampler import FixedSampler
-from .dataset import DocumentDataset, ShardedDocumentDataset
+from .dataset import DocumentDataset, ShardedDocumentDataset, TruncSubset
 from .decorators import save_parquet, save_pickle
 from .ops import concat_columns_dask, concat_sorted
 from .populations.base import Population
@@ -439,6 +439,7 @@ class L2VDataModule(pl.LightningDataModule):
             collate_fn=collate_encoded_documents,
             generator=torch.Generator(),
             pin_memory=self.pin_memory,
+            drop_last=True,
             persistent_workers=self.persistent_workers,
             multiprocessing_context='fork' if torch.backends.mps.is_available() else None,
             # "fork" in case you run it on MPS cluster, otherwise, None
@@ -462,6 +463,12 @@ class L2VDataModule(pl.LightningDataModule):
     def test_dataloader(self) -> DataLoader:
         """Returns the test dataloader"""
         return self.get_dataloader(self.test, shuffle=False)
+
+    def single_idx_dataloader(self, idx, reps, trunc_years=1, split="test"):
+        if reps % self.batch_size != 0:
+            log.warning(f"Reps of idx not divisible by batch_size, last batch will be smaller for idx={idx}.")
+        sdataset = TruncSubset(self.get_dataset(split), idx, reps, trunc_years)
+        return self.get_dataloader(sdataset, shuffle=False)
 
 
 class CLSDataModule(L2VDataModule):

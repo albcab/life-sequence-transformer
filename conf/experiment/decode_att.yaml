@@ -1,16 +1,16 @@
 # @package _global_
 
 defaults:
-  - /datamodule: pretrain
-  - /trainer: pretrain_noclip
+  - /datamodule: decode
+  - /trainer: decode_noclip
   - /callbacks
   
 #GENERAL
 version: 1.0
-implementation: "vno12_norm_pos_100"
-comments: "less dimension, more layers"
-name: "pretraining_dim"
-model_name: "w2v"
+implementation: "vno12_norm_pos"
+comments: "less feed forward, more dimension"
+name: "decoder_dim"
+model_name: "w2w"
 
 seed: 2024
 
@@ -22,7 +22,7 @@ callbacks.checkpoint.dirpath: ${ckpt_path}
 ###########################
 ###################### MODEL
 model:
-  _target_: src.models.pretrain.TransformerEncoder
+  _target_: src.models.decode.TransformerDecoder
   _convert_: all
   hparams:
     vocab_size: NULL #this needs to be set at runtime
@@ -33,13 +33,23 @@ model:
     accumulate_grad_batches: ${trainer.accumulate_grad_batches}
     seed: ${seed}
 
-    hidden_size: 240 #280 (needs to be divisible by n_heads)
-    hidden_ff: 960 #2210
+    #DECODER PARAMS
+    hidden_size: 320 #280 (needs to be divisible by n_heads)
+    hidden_ff: 1280 #2210
     hidden_act: "swish"
-    n_encoders: 12
+    n_decoders: 6
     n_heads: 8
     n_local: 6
     local_window_size: 36
+
+    #ENCODER PARAMS
+    encoder_hidden_ff: 1280 #2210
+    encoder_hidden_act: "swish"
+    n_encoders: 1
+    encoder_n_heads: 2
+    encoder_n_local: 2
+    encoder_local_window_size: 8
+    encoder_num_random_features: 4
 
     norm_type: "rms"
     att_dropout: 0.1 ## Attention Layers
@@ -60,11 +70,11 @@ model:
     num_random_features: 256
 
     # From trainer args..
-    learning_rate: 1.e-3 #1.e-3
+    learning_rate: 2.e-3 #1.e-3
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
-    pct_start: 0.30 #0.05
+    pct_start: 0.40 #0.05
 
     cls_num_targs: 3
 

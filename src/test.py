@@ -17,19 +17,19 @@ def last_ckpt(dir_):
     ckpt_path = Path(HOME_PATH, dir_, "best.ckpt")
     ckpt_ = Path(HOME_PATH, dir_)
     if ckpt_path.exists():
-        log.info("CHECKPOINT EXISTS:", str(ckpt_path))
+        print("CHECKPOINT EXISTS:", str(ckpt_path))
         return str(ckpt_path)
     elif ckpt_.exists():
-        log.info("CHECKPOINT EXISTS:", str(ckpt_))
+        print("CHECKPOINT EXISTS:", str(ckpt_))
         return str(ckpt_)
     else:
-        log.info("CHECKPOINT DOES NOT EXISTS:", str(ckpt_path))
+        print("CHECKPOINT DOES NOT EXISTS:", str(ckpt_path))
         raise Exception
         return None
 
 OmegaConf.register_new_resolver("last_ckpt", last_ckpt)
 
-@hydra.main(config_path="../conf", config_name="config", version_base=None)
+@hydra.main(config_path="../conf", config_name="gconfig", version_base=None)
 def main(cfg):
 
     # Workaround for hydra breaking import of local package - don't need if running as module "-m src.train"

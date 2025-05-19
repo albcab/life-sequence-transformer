@@ -25,8 +25,12 @@ class Embeddings(nn.Module):
         # Initialize Time2Vec embeddings
         ###MIGHT WANT TO CONSIDER USING BOTH COS AND SIN, SPECIALLY FOR MONTHS
         # self.month = PositionalEmbedding(1, hparams.hidden_size, torch.sin)
-        self.age = PositionalEmbedding(1, hparams.hidden_size, torch.cos)
-        self.year = PositionalEmbedding(1, hparams.hidden_size, torch.sin)
+        if hparams.smart_positions:
+            self.age = SmartPositionalEmbedding(1, hparams.hidden_size, torch.cos, year=False)
+            self.year = SmartPositionalEmbedding(1, hparams.hidden_size, torch.sin, year=True)
+        else:
+            self.age = PositionalEmbedding(1, hparams.hidden_size, torch.cos)
+            self.year = PositionalEmbedding(1, hparams.hidden_size, torch.sin)
 
         self.pos_emb = FixedPositionalEmbedding(hparams.hidden_size, hparams.max_length)
         dim_head = hparams.hidden_size // hparams.n_heads
@@ -159,3 +163,44 @@ class FixedPositionalEmbedding(nn.Module):
 
     def forward(self, x):
         return self.emb[None, :x.shape[1], :].to(x)
+
+
+
+# SHORTIME2VEC IMPLEMENTATION (FOR SHORT TIME SPANS)
+
+def st2v(tau, f, w, b, wt, bt):
+    """ShortTime2Vec function"""
+    v1 = f(torch.matmul(tau, w) + b)
+    v2 = torch.tanh(torch.matmul(tau, wt) + bt)
+    return torch.cat([v1, v2], -1)
+
+
+class SmartPositionalEmbedding(nn.Module):
+    """Implementation of Time2Vec"""
+
+    def __init__(self, in_features, out_features, f, year: bool):
+        super(SmartPositionalEmbedding, self).__init__()
+
+        if year:
+            num_trend = out_features // 2
+        else:
+            num_trend = out_features // 4
+        num_period = out_features - num_trend
+        self.w = nn.parameter.Parameter(
+            torch.randn(in_features, num_period))
+        self.b = nn.parameter.Parameter(
+            torch.randn(in_features, num_period))
+        self.wt = nn.parameter.Parameter(
+            torch.randn(in_features, num_trend))
+        self.bt = nn.parameter.Parameter(
+            torch.randn(in_features, num_trend))
+        self.f = f
+
+        d = 0.01
+        nn.init.uniform_(self.w, a=-d, b=d)
+        nn.init.uniform_(self.b, a=-d, b=d)
+        nn.init.uniform_(self.wt, a=-d, b=d)
+        nn.init.uniform_(self.bt, a=-d, b=d)
+
+    def forward(self, tau):
+        return st2v(tau, self.f, self.w, self.b, self.wt, self.bt)

@@ -1,28 +1,44 @@
 # @package _global_
 
 defaults:
-  - /datamodule: pretrain
-  - /trainer: pretrain_noclip
+  - /datamodule: decode_only
+  - /trainer: decode_noclip
   - /callbacks
   
 #GENERAL
 version: 1.0
-implementation: "vno12_norm_pos_100"
-comments: "less dimension, more layers"
-name: "pretraining_dim"
+implementation: "vno12_norm_pos_100sp"
+comments: "less feed forward, more dimension"
+name: "decoder_only1"
 model_name: "w2v"
 
 seed: 2024
 
-stage: "pre_training" # pre_training, finetuning, prediction, hyp_tune
+stage: "finetuning" # pre_training, finetuning, prediction, hyp_tune
 ckpt_path: ${last_ckpt:${callbacks.checkpoint.dirpath}} ##a bit weird implementation - fix later
 callbacks.checkpoint.dirpath: ${ckpt_path}
 
+#same as pretraining ckpt_path: ${user_path}/${local_path}/checkpoints/${implementation}/${name}/${version}/...
+model_path: ././checkpoints/vno12_norm_pos_100sp/decoder_only/1.0/best.ckpt
+
+# datamodule:
+#   batch_size: 8
+generate:
+  dataloader:
+    file_name: pensioner_test_ids_clean.csv
+    idx: 3167265
+    reps: 8
+    trunc_years: 9
+    split: test
+  sampler:
+    num_years: null
+    temp: 1.0
+    verbose: false
 
 ###########################
 ###################### MODEL
 model:
-  _target_: src.models.pretrain.TransformerEncoder
+  _target_: src.models.decode_only.GeneratorDecoderOnly
   _convert_: all
   hparams:
     vocab_size: NULL #this needs to be set at runtime
@@ -36,7 +52,7 @@ model:
     hidden_size: 240 #280 (needs to be divisible by n_heads)
     hidden_ff: 960 #2210
     hidden_act: "swish"
-    n_encoders: 12
+    n_encoders: 10
     n_heads: 8
     n_local: 6
     local_window_size: 36
@@ -60,13 +76,15 @@ model:
     num_random_features: 256
 
     # From trainer args..
-    learning_rate: 1.e-3 #1.e-3
+    learning_rate: 2.e-4
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999
-    pct_start: 0.30 #0.05
+    lr_gamma: 0.8
 
     cls_num_targs: 3
+
+    smart_positions: true
 
     epsilon: 1.e-6 #1.e-6
     stage: ${stage}
@@ -74,7 +92,7 @@ model:
     version: ${version}
 
 trainer:
-  accelerator: 'gpu'
+  accelerator: 'cuda'
   devices: 1 #[7]
   callbacks:
     - ${callbacks.checkpoint}

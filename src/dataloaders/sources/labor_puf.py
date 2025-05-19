@@ -25,7 +25,7 @@ class LaborMonthSource(TokenSource):
         default_factory=lambda: [
             "TIPOEPISODIO",
             # Binned("INCOME_MONTH", prefix="INCOME", n_bins=300),
-            Binned("INCOME_MONTH_ADJ", prefix="INCOME", n_bins=300),
+            Binned("INCOME_MONTH_ADJ", prefix="INCOME", n_bins=100),
             "WRK_TITLE",
             "WRK_PROVINCE",
             "ATECO",

@@ -140,7 +140,8 @@ class Transformer(nn.Module):
             [EncoderLayer(hparams) for _ in range(hparams.n_encoders)]
         )
         true_tensor = torch.tensor([True])
-        self.background_padding_mask = true_tensor.repeat(hparams.batch_size, 4)
+        background_padding_mask = true_tensor.repeat(hparams.batch_size, 4)
+        self.register_buffer("background_padding_mask", background_padding_mask, persistent=False)
 
     def encode(self, z):
         z = self.embedding.forward_indep(z['tokens'].long())#, z['year'].long(), z['month'].long())

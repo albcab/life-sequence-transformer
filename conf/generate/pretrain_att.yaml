@@ -7,9 +7,9 @@ defaults:
   
 #GENERAL
 version: 1.0
-implementation: "vno12_norm_pos_100"
-comments: "less dimension, more layers"
-name: "pretraining_dim"
+implementation: "vno12_norm_pos"
+comments: "less dimension, more feed forward"
+name: "pretraining_ff"
 model_name: "w2v"
 
 seed: 2024
@@ -33,10 +33,10 @@ model:
     accumulate_grad_batches: ${trainer.accumulate_grad_batches}
     seed: ${seed}
 
-    hidden_size: 240 #280 (needs to be divisible by n_heads)
-    hidden_ff: 960 #2210
+    hidden_size: 320 #280 (needs to be divisible by n_heads)
+    hidden_ff: 1280 #2210
     hidden_act: "swish"
-    n_encoders: 12
+    n_encoders: 8
     n_heads: 8
     n_local: 6
     local_window_size: 36
@@ -68,7 +68,7 @@ model:
 
     cls_num_targs: 3
 
-    epsilon: 1.e-6 #1.e-6
+    epsilon: 1.e-6
     stage: ${stage}
     implementation: ${implementation}
     version: ${version}

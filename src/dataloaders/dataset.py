@@ -1,9 +1,9 @@
 import json as json
 import logging
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any, Callable, Generic, Iterable, Optional, TypeVar
+from typing import Any, Callable, Generic, Iterable, Optional, TypeVar, Sequence
 
 import h5py
 import numpy as np
@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 T1 = TypeVar("T1", bound=Any)
 T2 = TypeVar("T2", bound=Any)
+_T_co = TypeVar("_T_co", covariant=True)
 
 
 class HDF5Dataset(Dataset, Generic[T1, T2]):
@@ -157,3 +158,85 @@ class ShardedDocumentDataset(ConcatDataset, Generic[TaskT]):
             )
 
         super().__init__(datasets)
+
+
+class TruncSubset(Dataset[_T_co]):
+    r"""
+    Subset of a dataset at specified indices with applied truncation.
+
+    WORKS ONLY WITH ONE SINGLE INDEX!!!
+
+    Args:
+        dataset (Dataset): The whole Dataset
+        indices (sequence): Indices in the whole set selected for subset
+    """
+
+    dataset: Dataset[_T_co]
+    idx: int
+    reps: int
+    trunc_years: int
+    sample: _T_co
+
+    def __init__(self, dataset: Dataset[_T_co], idx: int, reps: int, trunc_years: int) -> None:
+        self.dataset = dataset
+        self.idx = idx
+        self.reps = reps
+        self.trunc_years = trunc_years
+        # if idx > 5e6:
+        #     for i in range(len(dataset) - 1, -1, -1):
+        #         sample = dataset[i]
+        #         if sample.sequence_id == idx:
+        #             break
+        # else:
+        #     for sample in dataset:
+        #         if sample.sequence_id == idx:
+        #             break
+
+        directory = getattr(dataset, "directory", None).name
+        cache_path = directory + "_idx_cache.json"
+
+        try:
+            with open(cache_path, "r") as f:
+                index = json.load(f)
+
+        except FileNotFoundError:
+            index = {}
+            for i, sample in enumerate(dataset):
+                index[str(sample.sequence_id)] = i
+
+            with open(cache_path, "w") as f:
+                json.dump(index, f)
+
+        if str(idx) not in index:
+            raise ValueError(f"Sequence ID {idx} not found in dataset.")
+            
+        sample_idx = index[str(idx)]
+        sample = dataset[sample_idx]
+
+        self.sample = self.truncate_fn(sample)
+
+    def __getitem__(self, idx: int):
+        if isinstance(idx, list):
+            raise "Why is idx a list?"
+        return self.sample
+
+    def __len__(self):
+        return self.reps
+    
+    def truncate_fn(self, _user_data):
+        
+        user_data = asdict(_user_data)
+
+        input_ids = user_data.pop('input_ids').copy()
+        padding_mask = user_data.pop('padding_mask').copy()
+
+        last_idx = padding_mask.sum().item() - 1
+        last_year = input_ids[1, last_idx].item()
+
+        mask = (input_ids[1, :] > (last_year - self.trunc_years)) & (padding_mask == 1)
+        input_ids[:, mask] = 0
+        padding_mask[mask] = 0
+
+        # user_data['input_ids'] = input_ids
+        # user_data['padding_mask'] = padding_mask
+        return replace(_user_data, input_ids=input_ids, padding_mask=padding_mask)

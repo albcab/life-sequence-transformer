@@ -15,6 +15,11 @@ COPY figaro/src/ ./w2v/src/
 COPY figaro/conf/ ./w2v/conf/
 COPY figaro/requirements.txt .
 COPY figaro/run.sh .
+COPY figaro/run_experiments.sh ./w2v/
+COPY figaro/*_test_ids* ./w2v/
+COPY figaro/*_idx_cache.json ./w2v/
+COPY figaro/counter.py ./w2v/
+COPY figaro/income_100_cache.json ./w2v/
 
 #life2vec files
 COPY life2vec-light/src/ ./l2v/src/

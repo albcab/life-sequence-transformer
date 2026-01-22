@@ -6,7 +6,7 @@ defaults:
   - /callbacks
   
 #GENERAL
-version: 1.0
+version: 1.1
 implementation: "vno12_norm_pos_100sp"
 comments: "less feed forward, more dimension"
 name: "decoder"
@@ -19,7 +19,7 @@ ckpt_path: ${last_ckpt:${callbacks.checkpoint.dirpath}} ##a bit weird implementa
 callbacks.checkpoint.dirpath: ${ckpt_path}
 
 #same as pretraining ckpt_path: ${user_path}/${local_path}/checkpoints/${implementation}/${name}/${version}/...
-model_path: ././checkpoints/vno12_norm_pos_100sp/decoder_dim/1.0/best.ckpt
+model_path: ././checkpoints/vno12_norm_pos_100sp/decoder/1.0/best.ckpt
 
 # datamodule:
 #   batch_size: 8
@@ -27,8 +27,9 @@ generate:
   dataloader:
     file_name: pensioner_test_ids_clean.csv
     idx: 3167265
-    reps: 8
+    reps: 1
     trunc_years: 9
+    offset: 0
     split: test
   sampler:
     num_years: null

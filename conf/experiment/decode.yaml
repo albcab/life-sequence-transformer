@@ -9,7 +9,7 @@ defaults:
 version: 1.0
 implementation: "vno12_norm_pos_100sp"
 comments: "less feed forward, more dimension"
-name: "decoder_dim"
+name: "decoder"
 model_name: "w2w"
 
 seed: 2024

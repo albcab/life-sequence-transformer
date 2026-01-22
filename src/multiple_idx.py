@@ -57,7 +57,7 @@ def main(cfg):
     else:
         raise NotImplementedError("No pretrained model checkpoint to load")
     
-    dir_name = f"generated/{cfg.implementation}/{cfg.name}/{cfg.generate.dataloader.file_name.split(".")[0]}/"
+    dir_name = f"generated/{cfg.implementation}/{cfg.name}/{cfg.generate.dataloader.file_name.split(".")[0]}/{cfg.generate.dataloader.offset}/"
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
@@ -69,16 +69,22 @@ def main(cfg):
     model.eval()
     ids_df = pd.read_csv(cfg.generate.dataloader.file_name)
     idxs = ids_df.USER_ID.tolist()
-    trunc_years = ids_df.year_to_remove.to_list()
+    trunc_years = [y + cfg.generate.dataloader.offset for y in ids_df.year_to_remove.to_list()]
 
     for idx, trunc_year in zip(idxs, trunc_years):
+
+        index_file = dir_name + f"{idx}_index.csv"
+        token_file = dir_name + f"{idx}_token.csv"
+        if os.path.exists(index_file) and os.path.exists(token_file):
+            print(f"Files for id={idx} already exist, skipping...")
+            continue
 
         print()
         print(f"Starting id={idx} w/o {trunc_year} years...")
         dataloader = data.single_idx_dataloader(
             idx=idx,
             trunc_years=trunc_year,
-            reps=cfg.generate.dataloader.reps,
+            reps=cfg.generate.dataloader.reps * cfg.datamodule.batch_size,
             split=cfg.generate.dataloader.split)
 
         name = None
@@ -105,8 +111,8 @@ def main(cfg):
             cum_rows.append(rows)
 
         data_rows = np.vstack([original_sequence] + cum_rows)
-        np.savetxt(dir_name + f"{name}_index.csv", data_rows, fmt="%d", delimiter=",")
-        np.savetxt(dir_name + f"{name}_token.csv", np.vectorize(lambda i: index2token[i])(data_rows), fmt="%s", delimiter=",")
+        np.savetxt(index_file, data_rows, fmt="%d", delimiter=",")
+        np.savetxt(token_file, np.vectorize(lambda i: index2token[i])(data_rows), fmt="%s", delimiter=",")
 
 if __name__ == "__main__":
     main()

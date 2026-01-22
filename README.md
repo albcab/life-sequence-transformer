@@ -27,19 +27,15 @@ If using NVIDIA GPUs, we recommend building a container using `Dockerfile`.
 ### Run Training and Experiments
 
 ```
-# build encoder-decoder and decoder-only datasets
-HYDRA_FULL_ERROR=1 python -m src.prepare_data experiment=decode
+# build datasets
 HYDRA_FULL_ERROR=1 python -m src.prepare_data experiment=decode_only
 
-# run training for encoder-decoder and decoder-only:
-HYDRA_FULL_ERROR=1 python -m src.train experiment=decode
+# run training
 HYDRA_FULL_ERROR=1 python -m src.train experiment=decode_only
 
-# run finetuning for encoder-decoder and decoder-only:
-HYDRA_FULL_ERROR=1 python -m src.finetune generate=decode
+# run finetuning
 HYDRA_FULL_ERROR=1 python -m src.finetune generate=decode_only
 
 # run sequence generation (requires specifying parameters)
-HYDRA_FULL_ERROR=1 python -m src.multiple_idx generate=decode datamodule.batch_size=8 generate.dataloader.file_name=...
 HYDRA_FULL_ERROR=1 python -m src.multiple_idx generate=decode_only datamodule.batch_size=8 generate.dataloader.file_name=...
 ```

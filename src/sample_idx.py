@@ -45,7 +45,7 @@ def main(cfg):
     dataloader = data.single_idx_dataloader(
             idxs=cfg.generate.dataloader.idx,
             trunc_years=cfg.generate.dataloader.trunc_years,
-            reps=cfg.generate.dataloader.reps,
+            reps=cfg.generate.dataloader.reps * cfg.datamodule.batch_size,
             split=cfg.generate.dataloader.split)
     name = None
     eoy_idx = token2index['[EOY]']

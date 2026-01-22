@@ -108,7 +108,7 @@ class Corpus:
         assert self.reference_month == 0
 
         population: pd.DataFrame = self.population.population()
-        # self.reference_year = int(population.BIRTHDAY_MONTH.dt.year.min() - 1)
+        # self.reference_year = int(population.BIRTHDAY_YEAR.min() - 1)
         data_split = getattr(self.population.data_split(), split)
         ### RESETTING INDEX TO AVOID ERRORS OF SORTED DIVISIONS
         sentences_parts = [self.sentences(s).reset_index().set_index("USER_ID", sort=False, sorted=True) 
@@ -121,10 +121,10 @@ class Corpus:
         # combined_sentences["BIRTHDAY_MONTH"] = combined_sentences["BIRTHDAY_MONTH"].apply(
         #     lambda x: pd.to_datetime(x, errors='coerce'), meta=('BIRTHDAY_MONTH', 'datetime64[ns]'))
 
-        combined_sentences["AGE"] = combined_sentences["START_MONTH"].dt.year - combined_sentences["BIRTHDAY_MONTH"].dt.year
+        combined_sentences["AGE"] = combined_sentences["START_MONTH"].dt.year - combined_sentences["BIRTHDAY_YEAR"]
         #BIRTHDAY_YEAR should not be standardized
-        combined_sentences["BIRTHDAY_YEAR"] = combined_sentences["BIRTHDAY_MONTH"].dt.year
-        combined_sentences["BIRTHDAY_MONTH"] = combined_sentences["BIRTHDAY_MONTH"].dt.month - self.reference_month
+        # combined_sentences["BIRTHDAY_YEAR"] = combined_sentences["BIRTHDAY_MONTH"].dt.year
+        combined_sentences["BIRTHDAY_MONTH"] = combined_sentences["BIRTHDAY_MONTH"] - self.reference_month
 
         combined_sentences["START_YEAR"] = combined_sentences["START_MONTH"].dt.year - self.reference_year
         combined_sentences["START_MONTH"] = combined_sentences["START_MONTH"].dt.month - self.reference_month

@@ -9,7 +9,7 @@ defaults:
 version: 1.0
 implementation: "vno12_norm_pos_100sp"
 comments: "less feed forward, more dimension"
-name: "decoder_only1"
+name: "decoder_only"
 model_name: "w2v"
 
 seed: 2024
@@ -27,8 +27,9 @@ generate:
   dataloader:
     file_name: pensioner_test_ids_clean.csv
     idx: 3167265
-    reps: 8
+    reps: 1
     trunc_years: 9
+    offset: 1
     split: test
   sampler:
     num_years: null
@@ -76,7 +77,7 @@ model:
     num_random_features: 256
 
     # From trainer args..
-    learning_rate: 2.e-4
+    learning_rate: 3.e-5
     weight_decay: 0.01
     beta1: 0.9
     beta2: 0.999

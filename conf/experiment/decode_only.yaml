@@ -7,9 +7,9 @@ defaults:
   
 #GENERAL
 version: 1.0
-implementation: "vno12_norm_pos_100sp"
+implementation: "vno12_norm_pos_100sp_m"
 comments: "less feed forward, more dimension"
-name: "decoder_only_dim"
+name: "decoder_only"
 model_name: "w2v"
 
 seed: 2024

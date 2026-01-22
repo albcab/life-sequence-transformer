@@ -87,6 +87,10 @@ def main(cfg):
         # batch_size = sequence_ids.shape[0]
         # n += batch_size
         padding_mask = batch["padding_mask"]
+        original_month = batch["original_sequence"][:, 3]
+        for month in original_month:
+            month = month - 18
+            print(month)
         # sequence_id_sum += sequence_ids.sum().item()
         # sequence_id_count += sequence_ids.numel()  # Number of elements in sequence_ids
         length = padding_mask.sum(axis=1)

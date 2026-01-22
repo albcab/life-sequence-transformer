@@ -89,6 +89,9 @@ class UserMonthPopulation(Population):
         )
 
         result = result.set_index("USER_ID").compute()
+        # Calculating these later after the merge fucks up day/month month/day
+        result["BIRTHDAY_YEAR"] = result.BIRTHDAY_MONTH.dt.year
+        result["BIRTHDAY_MONTH"] = result.BIRTHDAY_MONTH.dt.month
         assert isinstance(result, pd.DataFrame)
         return result
 

@@ -57,7 +57,7 @@ def main(cfg):
     else:
         raise NotImplementedError("No pretrained model checkpoint to load")
     
-    dir_name = f"generated/{cfg.implementation}/{cfg.name}/{cfg.generate.dataloader.file_name.split(".")[0]}/{cfg.generate.dataloader.offset}/"
+    dir_name = f"generated_new/{cfg.implementation}/{cfg.name}/{cfg.generate.dataloader.file_name.split(".")[0]}/{cfg.generate.dataloader.offset}/"
     if not os.path.exists(dir_name):
         os.makedirs(dir_name)
 
@@ -98,10 +98,12 @@ def main(cfg):
 
             batch = model.transfer_batch_to_device(batch, model.device, dataloader_idx=0)
             
-            sample_batch, _ = model.sample(
+            sample_batch, _ = model.beam_search(
                 batch,
                 num_years=cfg.generate.sampler.num_years or trunc_year,
-                temp=cfg.generate.sampler.temp,
+                beam_width=cfg.generate.sampler.beam_width,
+                length_penalty=cfg.generate.sampler.length_penalty,
+                # temp=cfg.generate.sampler.temp,
                 verbose=cfg.generate.sampler.verbose,
                 eoy_idx=eoy_idx,
                 # ending_idx=ending_idx,

@@ -6,10 +6,12 @@ import pytorch_lightning as pl
 from pytorch_lightning import seed_everything
 from pathlib import Path
 import logging
+from typing import Optional
 
 """Custom code"""
 from src.models.transformer_utils import ReZero
 from src.models.transformer import Performer, NextTokenDecoder
+from src.models.dfa import LIFESEQUENCEDFA, evaluate_matcher
 
 log = logging.getLogger(__name__)
 
@@ -533,6 +535,169 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         batch["input_ids"] = input_ids
         batch["padding_mask"] = padding_mask
         return batch, generated_mask
+
+    def validate_tokens(self, top_indices, configurations, dfa, remaining_tokens, beam_width):
+        count_valid = 0
+        count_topk = 0
+        validated_top_indices = {} # {index: {(state, prefix, distance), ...}, ...}
+        for index in top_indices:
+            index = index.item()
+            count_topk += 1
+            if count_topk > beam_width and count_valid > 0:
+                break
+            for state, prefix, distance in configurations:
+                for (current_state, matcher), next_state in dfa.transitions.items():
+                    if state == current_state:
+                        satisfied, extendable, fixable = evaluate_matcher(matcher=matcher, tokens=prefix + (index,))
+                        # case 1: satisfied = True, extendable = False, fixable = False. Add the new configuration (next_state, (), dfa.state_distances[next_state]) if dfa.state_distances[next_state] <= max_len - step + 1
+                        if satisfied and not extendable and not fixable:
+                            if dfa.state_distances[next_state] <= remaining_tokens:
+                                if index not in validated_top_indices:
+                                    validated_top_indices[index] = set()
+                                validated_top_indices[index].add((next_state, (), dfa.state_distances[next_state]))
+                                count_valid += 1
+                        # case 2: satisfied = True, extendable = True, fixable = False. Add two new configurations: (next_state, (), dfa.state_distances[next_state]) and (current_state, prefix + (index,), distance) if for both dfa.state_distances[next_state] <= max_len - step + 1 and distance < max_len - step + 1 respectively
+                        elif satisfied and extendable and not fixable:
+                            if dfa.state_distances[next_state] <= remaining_tokens:
+                                if index not in validated_top_indices:
+                                    validated_top_indices[index] = set()
+                                validated_top_indices[index].add((next_state, (), dfa.state_distances[next_state]))
+                                count_valid += 1
+                            if distance <= remaining_tokens:
+                                if index not in validated_top_indices:
+                                    validated_top_indices[index] = set()
+                                validated_top_indices[index].add((current_state, prefix + (index,), distance))
+                                count_valid += 1
+                        # case 3: satisfied = False, extendable = False, fixable = True. Add the new configuration (current_state, prefix + (index,), distance - len(prefix + (index,))) if( distance - len(prefix + (index,))) <= max_len - step + 1
+                        elif not satisfied and not extendable and fixable:
+                            if (distance - len(prefix + (index,))) <= remaining_tokens:
+                                if index not in validated_top_indices:
+                                    validated_top_indices[index] = set()
+                                validated_top_indices[index].add((current_state, prefix + (index,), distance - len(prefix + (index,))))
+                                count_valid += 1
+                        # case 4: satisfied = False, extendable = False, fixable = False. Do not add any new configuration
+                        elif not satisfied and not extendable and not fixable:
+                            pass
+        return validated_top_indices
+    
+    @torch.inference_mode()
+    def beam_search(
+        self,
+        batch,
+        num_years: int,
+        beam_width: int = 5,
+        length_penalty: float = 1.0,
+        max_len: Optional[int] = None,
+        eoy_idx: int = 3,
+        ending_idx: Optional[int] = None,
+        verbose: bool = False,
+    ):
+        dfa = LIFESEQUENCEDFA()
+        device = batch["input_ids"].device
+        B, _, max_seq_len = batch["input_ids"].shape
+        if max_len is None:
+            max_len = max_seq_len
+
+        if max_len < dfa.state_distances[dfa.initial_state]:
+            raise ValueError(f"max_len must be at least {dfa.state_distances[dfa.initial_state]} to allow any valid sequence generation.")
+        
+        best_input_ids = batch["input_ids"].clone()
+        best_padding_mask = batch["padding_mask"].clone()
+        best_generated_mask = torch.zeros_like(best_padding_mask)
+
+        for b in range(B):
+
+            input_ids = batch["input_ids"][b:b+1].clone()  # (1, 3, T)
+            padding_mask = batch["padding_mask"][b:b+1].clone()  # (1, T)
+            initial_sequence = []
+            for m in range(len(padding_mask[0])):
+                if not padding_mask[0][m].item(): break
+                initial_sequence.append(int(input_ids[0][0][m].item()))
+
+            generated_mask = torch.zeros_like(padding_mask)
+
+            # print("Init seq", initial_sequence)
+            configs = dfa.get_initial_conf(initial_sequence, verbose=verbose)
+
+            beams = []
+            for s, p in configs:
+                # (input_ids, padding_mask, generated_mask, year_counter, log_prob, done, {(state, prefix, distance)})
+                beams.append((input_ids, padding_mask, generated_mask, 0, 0.0, False, {(s, p, dfa.state_distances[s])}))
+
+            # print("Initial beams", beams)
+            for step in range(max_len):
+                remaining_tokens = max_len - step + 1
+                if all(beam[5] for beam in beams):
+                    break
+
+                new_beams = []
+                for beam in beams:
+                    inp_ids, pad_mask, gen_mask, year_cnt, log_prob, done, configurations = beam
+                    if done:
+                        new_beams.append(beam)
+                        continue
+
+                    next_pos = pad_mask.sum(dim=1).item()
+                    if next_pos >= max_len:
+                        new_beams.append((inp_ids, pad_mask, gen_mask, year_cnt, log_prob, True))
+                        continue
+
+                    curr_batch = {"input_ids": inp_ids, "padding_mask": pad_mask}
+                    logits = self(curr_batch)  # (1, T, vocab_size)
+                    last_logits = logits[0, next_pos - 1]  # (vocab_size,)
+
+                    probs = F.softmax(last_logits, dim=-1)  # (vocab_size,)
+
+                    # top_probs, top_indices = torch.topk(probs, beam_width)
+                    sorted_indices = torch.argsort(probs, descending=True)  # (vocab_size,)
+                    top_indices = sorted_indices
+                    # top_probs = probs[top_indices]
+                    
+                    validated_top_indices = self.validate_tokens(top_indices, configurations, dfa, remaining_tokens, beam_width)
+
+                    for key, item in validated_top_indices.items():
+                        new_token = key
+                        new_log_prob = log_prob + torch.log(probs[key]).item()
+
+                        increment = 1 if new_token == eoy_idx else 0
+                        new_year_cnt = year_cnt + increment
+
+                        done_flag = False
+                        if ending_idx is not None and new_token == ending_idx:
+                            done_flag = True
+                        elif new_year_cnt > num_years:
+                            done_flag = True
+                        elif next_pos + 1 >= max_len:
+                            done_flag = True
+
+                        new_inp_ids = inp_ids.clone()
+                        new_pad_mask = pad_mask.clone()
+                        new_gen_mask = gen_mask.clone()
+
+                        new_inp_ids[0, 0, next_pos] = new_token
+                        prev_year = inp_ids[0, 1, next_pos - 1].item()
+                        prev_age = inp_ids[0, 2, next_pos - 1].item()
+                        new_year = prev_year + increment
+                        new_age = prev_age + increment
+                        new_inp_ids[0, 1, next_pos] = new_year
+                        new_inp_ids[0, 2, next_pos] = new_age
+
+                        new_pad_mask[0, next_pos] = 1
+                        new_gen_mask[0, next_pos] = 1
+
+                        new_beams.append((new_inp_ids, new_pad_mask, new_gen_mask, new_year_cnt, new_log_prob, done_flag, item))
+
+                new_beams.sort(key=lambda x: x[4] / (x[1].sum().item() ** length_penalty), reverse=True)
+                beams = new_beams[:beam_width]
+
+            best_beam = max(beams, key=lambda x: x[4] / (x[1].sum().item() ** length_penalty))
+            best_input_ids[b:b+1] = best_beam[0]
+            best_padding_mask[b:b+1] = best_beam[1]
+            best_generated_mask[b:b+1] = best_beam[2]
+
+        batch["input_ids"] = best_input_ids
+        batch["padding_mask"] = best_padding_mask
+        return batch, best_generated_mask
 
     def configure_optimizers(self):
         """Configuration of the Optimizer and the Learning Rate Scheduler."""

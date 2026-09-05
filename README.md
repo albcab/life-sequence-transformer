@@ -22,7 +22,9 @@ The `/src` folder contains the source code:
 4. `prepare_data.py` was used to run the data processing.
 5. `sample_idx.py` and `multiple_idx.py` are used to generate sequences for individuals in the database, conditioned on some know years.
 
-If using NVIDIA GPUs, we recommend building a container using `Dockerfile`.
+If using NVIDIA GPUs, you can build a container using a local `Dockerfile`.
+Dockerfiles, CSV datasets, generated results, caches, and model artifacts are
+ignored by Git and must be supplied or generated locally.
 
 ### Run Training and Experiments
 

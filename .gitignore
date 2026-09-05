@@ -3,7 +3,10 @@ __pycache__
 *.mid
 *.tar.gz
 *.zip
-metrics.csv
+*.csv
+*.csv.gz
+*.csv.bz2
+*.csv.xz
 .DS_Store
 lightning_logs
 tmp
@@ -19,3 +22,36 @@ weights
 checkpoints
 generated
 life_sequence_dfa
+
+# Local container and editor configuration
+Dockerfile
+Dockerfile.*
+*.Dockerfile
+dockerfile
+.vscode/
+
+# Generated lookup caches and large data/model artifacts
+*_cache.json
+*.parquet
+*.arrow
+*.feather
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.safetensors
+*.tar
+*.tgz
+*.7z
+
+# Generated sequences and experiment results
+generated_*/
+results/
+results_*/
+experiment_results/
+exp_results/
+wandb/

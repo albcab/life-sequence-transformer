@@ -541,7 +541,7 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         count_topk = 0
         validated_top_indices = {} # {index: {(state, prefix, distance), ...}, ...}
         for index in top_indices:
-            index = index.item()
+            index = index.item() if hasattr(index, "item") else int(index)
             count_topk += 1
             if count_topk > beam_width and count_valid > 0:
                 break
@@ -592,12 +592,21 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         ending_idx: Optional[int] = None,
         verbose: bool = False,
     ):
-        dfa = LIFESEQUENCEDFA()
         device = batch["input_ids"].device
         B, _, max_seq_len = batch["input_ids"].shape
         if max_len is None:
             max_len = max_seq_len
 
+        if isinstance(num_years, (int, float)):
+            num_years_by_sample = [int(num_years)] * B
+        elif isinstance(num_years, torch.Tensor):
+            num_years_by_sample = [int(value) for value in num_years.tolist()]
+        else:
+            num_years_by_sample = [int(value) for value in num_years]
+        if len(num_years_by_sample) != B:
+            raise ValueError("num_years must be a scalar or contain one value per sample")
+
+        dfa = LIFESEQUENCEDFA()
         if max_len < dfa.state_distances[dfa.initial_state]:
             raise ValueError(f"max_len must be at least {dfa.state_distances[dfa.initial_state]} to allow any valid sequence generation.")
         
@@ -605,8 +614,8 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         best_padding_mask = batch["padding_mask"].clone()
         best_generated_mask = torch.zeros_like(best_padding_mask)
 
+        beams_by_sample = []
         for b in range(B):
-
             input_ids = batch["input_ids"][b:b+1].clone()  # (1, 3, T)
             padding_mask = batch["padding_mask"][b:b+1].clone()  # (1, T)
             initial_sequence = []
@@ -623,41 +632,70 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
             for s, p in configs:
                 # (input_ids, padding_mask, generated_mask, year_counter, log_prob, done, {(state, prefix, distance)})
                 beams.append((input_ids, padding_mask, generated_mask, 0, 0.0, False, {(s, p, dfa.state_distances[s])}))
+            beams_by_sample.append(beams)
 
-            # print("Initial beams", beams)
-            for step in range(max_len):
-                remaining_tokens = max_len - step + 1
-                if all(beam[5] for beam in beams):
-                    break
+        # At each generation step, run every active beam from every sample through
+        # the transformer in one forward pass. DFA configurations and pruning remain
+        # independent, so this changes throughput rather than search semantics.
+        for step in range(max_len):
+            remaining_tokens = max_len - step + 1
+            active_beams = []
+            candidates_by_sample = [[] for _ in range(B)]
 
-                new_beams = []
+            for b, beams in enumerate(beams_by_sample):
                 for beam in beams:
                     inp_ids, pad_mask, gen_mask, year_cnt, log_prob, done, configurations = beam
                     if done:
-                        new_beams.append(beam)
+                        candidates_by_sample[b].append(beam)
                         continue
 
-                    next_pos = pad_mask.sum(dim=1).item()
+                    next_pos = int(pad_mask.sum().item())
                     if next_pos >= max_len:
-                        new_beams.append((inp_ids, pad_mask, gen_mask, year_cnt, log_prob, True))
+                        candidates_by_sample[b].append(
+                            (inp_ids, pad_mask, gen_mask, year_cnt, log_prob, True, configurations)
+                        )
                         continue
 
-                    curr_batch = {"input_ids": inp_ids, "padding_mask": pad_mask}
-                    logits = self(curr_batch)  # (1, T, vocab_size)
-                    last_logits = logits[0, next_pos - 1]  # (vocab_size,)
+                    active_beams.append((b, beam, next_pos))
 
-                    probs = F.softmax(last_logits, dim=-1)  # (vocab_size,)
+            if active_beams:
+                active_input_ids = torch.cat(
+                    [beam[1][0] for beam in active_beams], dim=0
+                )
+                active_padding_masks = torch.cat(
+                    [beam[1][1] for beam in active_beams], dim=0
+                )
+                logits = self({
+                    "input_ids": active_input_ids,
+                    "padding_mask": active_padding_masks,
+                })
 
-                    # top_probs, top_indices = torch.topk(probs, beam_width)
-                    sorted_indices = torch.argsort(probs, descending=True)  # (vocab_size,)
-                    top_indices = sorted_indices
-                    # top_probs = probs[top_indices]
-                    
-                    validated_top_indices = self.validate_tokens(top_indices, configurations, dfa, remaining_tokens, beam_width)
+                row_indices = torch.arange(len(active_beams), device=device)
+                next_positions = torch.tensor(
+                    [item[2] - 1 for item in active_beams], device=device
+                )
+                last_logits = logits[row_indices, next_positions]
+                probs = F.softmax(last_logits, dim=-1)
+                sorted_indices = torch.argsort(probs, dim=-1, descending=True)
+
+                # One device synchronization per decoding step avoids a synchronization
+                # for every candidate token inspected by the DFA.
+                probs_cpu = probs.detach().cpu()
+                sorted_indices_cpu = sorted_indices.detach().cpu()
+
+                for row, (b, beam, next_pos) in enumerate(active_beams):
+                    inp_ids, pad_mask, gen_mask, year_cnt, log_prob, _, configurations = beam
+                    validated_top_indices = self.validate_tokens(
+                        sorted_indices_cpu[row],
+                        configurations,
+                        dfa,
+                        remaining_tokens,
+                        beam_width,
+                    )
 
                     for key, item in validated_top_indices.items():
                         new_token = key
-                        new_log_prob = log_prob + torch.log(probs[key]).item()
+                        new_log_prob = log_prob + torch.log(probs_cpu[row, key]).item()
 
                         increment = 1 if new_token == eoy_idx else 0
                         new_year_cnt = year_cnt + increment
@@ -665,7 +703,7 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
                         done_flag = False
                         if ending_idx is not None and new_token == ending_idx:
                             done_flag = True
-                        elif new_year_cnt > num_years:
+                        elif new_year_cnt > num_years_by_sample[b]:
                             done_flag = True
                         elif next_pos + 1 >= max_len:
                             done_flag = True
@@ -685,11 +723,25 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
                         new_pad_mask[0, next_pos] = 1
                         new_gen_mask[0, next_pos] = 1
 
-                        new_beams.append((new_inp_ids, new_pad_mask, new_gen_mask, new_year_cnt, new_log_prob, done_flag, item))
+                        candidates_by_sample[b].append(
+                            (new_inp_ids, new_pad_mask, new_gen_mask, new_year_cnt, new_log_prob, done_flag, item)
+                        )
 
-                new_beams.sort(key=lambda x: x[4] / (x[1].sum().item() ** length_penalty), reverse=True)
-                beams = new_beams[:beam_width]
+            if not active_beams:
+                break
 
+            for b, candidates in enumerate(candidates_by_sample):
+                if not candidates:
+                    raise RuntimeError(
+                        f"DFA beam search found no valid continuation for batch item {b}"
+                    )
+                candidates.sort(
+                    key=lambda x: x[4] / (x[1].sum().item() ** length_penalty),
+                    reverse=True,
+                )
+                beams_by_sample[b] = candidates[:beam_width]
+
+        for b, beams in enumerate(beams_by_sample):
             best_beam = max(beams, key=lambda x: x[4] / (x[1].sum().item() ** length_penalty))
             best_input_ids[b:b+1] = best_beam[0]
             best_padding_mask[b:b+1] = best_beam[1]

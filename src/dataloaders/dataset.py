@@ -224,19 +224,78 @@ class TruncSubset(Dataset[_T_co]):
         return self.reps
     
     def truncate_fn(self, _user_data):
-        
-        user_data = asdict(_user_data)
+        return truncate_sample(_user_data, self.trunc_years)
 
-        input_ids = user_data.pop('input_ids').copy()
-        padding_mask = user_data.pop('padding_mask').copy()
 
-        last_idx = padding_mask.sum().item() - 1
-        last_year = input_ids[1, last_idx].item()
+def truncate_sample(_user_data, trunc_years: int):
+    user_data = asdict(_user_data)
 
-        mask = (input_ids[1, :] > (last_year - self.trunc_years)) & (padding_mask == 1)
-        input_ids[:, mask] = 0
-        padding_mask[mask] = 0
+    input_ids = user_data.pop('input_ids').copy()
+    padding_mask = user_data.pop('padding_mask').copy()
 
-        # user_data['input_ids'] = input_ids
-        # user_data['padding_mask'] = padding_mask
-        return replace(_user_data, input_ids=input_ids, padding_mask=padding_mask)
+    last_idx = int(padding_mask.sum().item()) - 1
+    last_year = input_ids[1, last_idx].item()
+
+    mask = (input_ids[1, :] > (last_year - trunc_years)) & (padding_mask == 1)
+    input_ids[:, mask] = 0
+    padding_mask[mask] = 0
+
+    return replace(_user_data, input_ids=input_ids, padding_mask=padding_mask)
+
+
+class MultiTruncSubset(Dataset[_T_co]):
+    """Lazily load and truncate several sequence IDs.
+
+    Samples are interleaved by repetition so a sequential DataLoader batch contains
+    different people instead of repeated copies of one person.
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset[_T_co],
+        idxs: Sequence[int],
+        reps: int,
+        trunc_years: Sequence[int],
+    ) -> None:
+        if len(idxs) != len(trunc_years):
+            raise ValueError("idxs and trunc_years must have the same length")
+        if reps < 1:
+            raise ValueError("reps must be at least 1")
+
+        self.dataset = dataset
+        self.items = [
+            (int(idx), int(years))
+            for _ in range(reps)
+            for idx, years in zip(idxs, trunc_years)
+        ]
+        self._sample_cache = {}
+
+        directory = getattr(dataset, "directory", None)
+        if directory is None:
+            raise ValueError("dataset must expose its source directory")
+        cache_path = f"{directory.name}_idx_cache.json"
+
+        try:
+            with open(cache_path, "r") as f:
+                self.index = json.load(f)
+        except FileNotFoundError:
+            self.index = {}
+            for i, sample in enumerate(dataset):
+                self.index[str(sample.sequence_id)] = i
+            with open(cache_path, "w") as f:
+                json.dump(self.index, f)
+
+        missing = [idx for idx in idxs if str(idx) not in self.index]
+        if missing:
+            raise ValueError(f"Sequence IDs not found in dataset: {missing[:10]}")
+
+    def __getitem__(self, item: int):
+        idx, trunc_years = self.items[item]
+        cache_key = (idx, trunc_years)
+        if cache_key not in self._sample_cache:
+            sample = self.dataset[self.index[str(idx)]]
+            self._sample_cache[cache_key] = truncate_sample(sample, trunc_years)
+        return self._sample_cache[cache_key]
+
+    def __len__(self):
+        return len(self.items)

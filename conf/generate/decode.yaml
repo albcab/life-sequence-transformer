@@ -28,6 +28,7 @@ generate:
     file_name: pensioner_test_ids_clean.csv
     idx: 3167265
     reps: 1
+    samples_per_id: null # null preserves the old reps * batch_size behavior
     trunc_years: 9
     offset: 0
     split: test

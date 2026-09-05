@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
 from .tasks.base import Task, collate_encoded_documents
 from .sampler import FixedSampler
-from .dataset import DocumentDataset, ShardedDocumentDataset, TruncSubset
+from .dataset import DocumentDataset, MultiTruncSubset, ShardedDocumentDataset, TruncSubset
 from .decorators import save_parquet, save_pickle
 from .ops import concat_columns_dask, concat_sorted
 from .populations.base import Population
@@ -428,7 +428,9 @@ class L2VDataModule(pl.LightningDataModule):
 
     # TODO: vvv Consider moving this stuff to the task instead vvv
 
-    def get_dataloader(self, dataset: Dataset, shuffle: bool = True) -> DataLoader:
+    def get_dataloader(
+        self, dataset: Dataset, shuffle: bool = True, drop_last: bool = True
+    ) -> DataLoader:
         """Instantiaties and return a dataloader for the given dataset using the
         parameters of the module"""
         return DataLoader(
@@ -439,7 +441,7 @@ class L2VDataModule(pl.LightningDataModule):
             collate_fn=collate_encoded_documents,
             generator=torch.Generator(),
             pin_memory=self.pin_memory,
-            drop_last=True,
+            drop_last=drop_last,
             persistent_workers=self.persistent_workers,
             multiprocessing_context='fork' if torch.backends.mps.is_available() else None,
             # "fork" in case you run it on MPS cluster, otherwise, None
@@ -468,7 +470,13 @@ class L2VDataModule(pl.LightningDataModule):
         if reps % self.batch_size != 0:
             log.warning(f"Reps of idx not divisible by batch_size, last batch will be smaller for idx={idx}.")
         sdataset = TruncSubset(self.get_dataset(split), idx, reps, trunc_years)
-        return self.get_dataloader(sdataset, shuffle=False)
+        return self.get_dataloader(sdataset, shuffle=False, drop_last=False)
+
+    def multi_idx_dataloader(self, idxs, reps, trunc_years, split="test"):
+        dataset = MultiTruncSubset(
+            self.get_dataset(split), idxs, reps, trunc_years
+        )
+        return self.get_dataloader(dataset, shuffle=False, drop_last=False)
 
 
 class CLSDataModule(L2VDataModule):

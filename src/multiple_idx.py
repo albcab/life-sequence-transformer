@@ -160,7 +160,8 @@ def main(cfg):
                 result = results[idx]
                 if result["original_sequence"] is None:
                     result["original_sequence"] = original_sequences[row]
-                generated[row, known_masks[row]] = 0
+                    if not result["generated_rows"]:
+                        generated[row, known_masks[row]] = 0
                 result["generated_rows"].append(generated[row].copy())
             progress.update(len(batch_ids))
 

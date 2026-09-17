@@ -195,6 +195,7 @@ def main(cfg):
             sample_batch, _ = model.beam_search(
                 batch,
                 num_years=generation_years,
+                temp=cfg.generate.sampler.temp,
                 beam_width=cfg.generate.sampler.beam_width,
                 length_penalty=cfg.generate.sampler.length_penalty,
                 verbose=cfg.generate.sampler.verbose,

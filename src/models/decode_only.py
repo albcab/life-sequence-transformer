@@ -585,6 +585,7 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         self,
         batch,
         num_years: int,
+        temp=0.8,
         beam_width: int = 5,
         length_penalty: float = 1.0,
         max_len: Optional[int] = None,
@@ -742,7 +743,9 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
                 beams_by_sample[b] = candidates[:beam_width]
 
         for b, beams in enumerate(beams_by_sample):
-            best_beam = max(beams, key=lambda x: x[4] / (x[1].sum().item() ** length_penalty))
+            scores = torch.tensor([beam[4] / (beam[1].sum().item() ** length_penalty) for beam in beams], device=device)
+            beam_idx = torch.multinomial(torch.softmax(scores / temp, dim=0), num_samples=1,).item()
+            best_beam = beams[beam_idx]
             best_input_ids[b:b+1] = best_beam[0]
             best_padding_mask[b:b+1] = best_beam[1]
             best_generated_mask[b:b+1] = best_beam[2]

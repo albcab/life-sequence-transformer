@@ -1,0 +1,109 @@
+# @package _global_
+
+defaults:
+  - /datamodule: hf_llm
+  - /trainer: decode_noclip
+  - /callbacks
+
+
+###########################
+##################### GENERAL
+
+version: 1.6
+implementation: "hf_causal_lm"
+comments: "HuggingFace causal LM generation on life sequences"
+
+name: "hf_causal_lm"
+# model_name: "meta-llama/Llama-3.2-1B"
+model_name: "openai-community/gpt2"
+
+seed: 2024
+
+stage: "finetuning"
+
+ckpt_path: ${last_ckpt:${callbacks.checkpoint.dirpath}}
+callbacks.checkpoint.dirpath: ${ckpt_path}
+
+# Checkpoint from the trained HFCausalLM
+model_path: ./checkpoints/hf_causal_lm/hf_causal_lm/1.0/last.ckpt
+
+
+###########################
+################## GENERATION
+
+generate:
+  dataloader:
+    file_name: pensioner_test_ids_clean.csv
+    idx: 3167265
+    reps: 1
+    samples_per_id: null  # null preserves reps * batch_size behavior
+    trunc_years: 9
+    offset: 1
+    split: test
+
+  sampler:
+    num_years: null
+    temp: 1.0
+    verbose: false
+    beam_width: 5
+    length_penalty: 1.0
+
+
+###########################
+################### TOKENIZER
+
+tokenizer:
+  _target_: transformers.AutoTokenizer.from_pretrained
+  pretrained_model_name_or_path: ${model_name}
+
+
+###########################
+###################### MODEL
+
+model:
+  _target_: src.models.hf_llm.HFCausalLM
+  _convert_: all
+
+  tokenizer: NULL  # injected at runtime
+
+  hparams:
+    model_name: ${model_name}
+
+    seed: ${seed}
+    stage: ${stage}
+
+    training_task: ${datamodule.task.name}
+
+    experiment_name: ${name}_${model_name}
+    experiment_version: ${version}
+    implementation: ${implementation}
+    version: ${version}
+
+    # Keep these consistent with training/checkpoint hparams
+    learning_rate: 2.e-5
+    weight_decay: 0.01
+
+    beta1: 0.9
+    beta2: 0.999
+    epsilon: 1.e-8
+
+    warmup_ratio: 0.05
+
+
+###########################
+#################### TRAINER
+
+trainer:
+  accelerator: "cuda"
+  devices: 1
+
+  callbacks:
+    - ${callbacks.checkpoint}
+    - ${callbacks.lr_monitor}
+    - ${callbacks.grad_norm_monitor}
+    # - ${callbacks.silence_warnings}
+    # - ${callbacks.text_collector}
+    # - ${callbacks.embedding_collector}
+    # - ${callbacks.reseed_dataloader}
+    # - ${callbacks.save_weights}
+    # - ${callbacks.track_ids}

@@ -1,0 +1,86 @@
+# @package _global_
+
+defaults:
+  - /datamodule: hf_llm
+  - /trainer: decode_noclip
+  - /callbacks
+
+
+###########################
+##################### GENERAL
+
+version: 1.0
+implementation: "hf_causal_lm"
+comments: "HuggingFace causal LM finetuning on life sequences"
+
+name: "hf_causal_lm"
+# model_name: "meta-llama/Llama-3.2-1B"
+model_name: "openai-community/gpt2"
+
+seed: 2024
+
+stage: "finetuning"
+
+ckpt_path: ${last_ckpt:${callbacks.checkpoint.dirpath}}
+callbacks.checkpoint.dirpath: ${ckpt_path}
+
+
+###########################
+################### TOKENIZER
+
+tokenizer:
+  _target_: transformers.AutoTokenizer.from_pretrained
+  pretrained_model_name_or_path: ${model_name}
+
+
+###########################
+###################### MODEL
+
+model:
+  _target_: src.models.hf_llm.HFCausalLM
+  _convert_: all
+
+  tokenizer: NULL  # injected at runtime
+
+  hparams:
+    model_name: ${model_name}
+
+    seed: ${seed}
+    stage: ${stage}
+
+    training_task: ${datamodule.task.name}
+
+    experiment_name: ${name}_${model_name}
+    experiment_version: ${version}
+    implementation: ${implementation}
+    version: ${version}
+
+    # Optimizer
+    learning_rate: 2.e-5
+    weight_decay: 0.01
+
+    beta1: 0.9
+    beta2: 0.999
+    epsilon: 1.e-8
+
+    # Scheduler
+    warmup_ratio: 0.05
+
+
+###########################
+#################### TRAINER
+
+trainer:
+  accelerator: "cuda"
+  devices: 1
+
+  callbacks:
+    - ${callbacks.checkpoint}
+    - ${callbacks.lr_monitor}
+    - ${callbacks.grad_norm_monitor}
+    # - ${callbacks.silence_warnings}
+    # - ${callbacks.text_collector}
+    # - ${callbacks.embedding_collector}
+    # - ${callbacks.reseed_dataloader}
+    # - ${callbacks.save_weights}
+    # - ${callbacks.track_ids}

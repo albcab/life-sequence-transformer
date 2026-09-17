@@ -578,3 +578,79 @@ class CLSDataModule(L2VDataModule):
         """Returns the test dataloader"""
         indices = self.get_ordered_indexes(split = "test")
         return self.get_fixed_dataloader(self.test, indices)
+
+
+from transformers import PreTrainedTokenizerBase
+
+@dataclass
+class HFCausalL2VDataModule(L2VDataModule):
+    tokenizer: PreTrainedTokenizerBase = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        assert self.tokenizer is not None
+
+        self.tokenizer.add_special_tokens({
+            "additional_special_tokens": [
+                # "[CLS]",
+                # "[SEP]",
+                "[BOL]",
+                "[EOL]",
+                "[EOY]",
+                "[PLCH0]",
+                "[UNK]",
+            ]
+        })
+
+        self.tokenizer.pad_token = self.tokenizer.eos_token
+
+    def _decode_l2v_ids(self, ids) -> str:
+        index2token = self.vocabulary.index2token
+
+        # return " [SEP] ".join(   #we could use separation token
+        return " ".join(
+            index2token[int(idx)]
+            for idx in ids
+            if int(idx) != 0 #remove padding
+        )
+
+    def collate_hf(self, documents):
+        texts = [
+            self._decode_l2v_ids(doc.original_sequence)
+            for doc in documents
+        ]
+
+        batch = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        labels = batch["input_ids"].clone()
+        labels[batch["attention_mask"] == 0] = -100
+
+        batch["labels"] = labels
+
+        return batch
+
+    def get_dataloader(
+        self,
+        dataset: Dataset,
+        shuffle: bool = True,
+        drop_last: bool = True,
+    ) -> DataLoader:
+        return DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            shuffle=shuffle,
+            collate_fn=self.collate_hf,
+            generator=torch.Generator(),
+            pin_memory=self.pin_memory,
+            drop_last=drop_last,
+            persistent_workers=self.persistent_workers,
+            multiprocessing_context=(
+                "fork" if torch.backends.mps.is_available() else None
+            ),
+        )

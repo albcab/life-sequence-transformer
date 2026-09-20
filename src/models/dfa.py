@@ -378,6 +378,11 @@ class LIFESEQUENCEDFA:
             ("qm16", TOKEN_INDICES_DICT["eol"]): "qfinal",
         }
 
+        self.transitions_by_state = {}
+
+        for (current_state, matcher), next_state in self.transitions.items():
+            self.transitions_by_state.setdefault(current_state, []).append((matcher, next_state))
+
         self.states = set()
         for (s, _), t in self.transitions.items():
             self.states.add(s)
@@ -519,29 +524,51 @@ class LIFESEQUENCEDFA:
 
                 if verbose:
                     print("Conf", state, prefix)
-                for (current_state, matcher), next_state in self.transitions.items():
-                    if state == current_state:
-                        satisfied, extendable, fixable = evaluate_matcher(matcher=matcher, tokens=list(prefix) + [element])
+                # for (current_state, matcher), next_state in self.transitions.items():
+                #     if state == current_state:
+                        # satisfied, extendable, fixable = evaluate_matcher(matcher=matcher, tokens=list(prefix) + [element])
 
+                        # if verbose:
+                        #     print(f"satisfied={satisfied}, extendable={extendable}, partial={fixable}")
+                        # if satisfied and not extendable and not fixable:
+                        #     if verbose:
+                        #         print("add", (next_state, ()))
+                        #     temp_configurations.add((next_state, ()))
+                        # elif satisfied and extendable and not fixable:
+                        #     if verbose:
+                        #         print("add", (next_state, ()))
+                        #         print("add", ((current_state, prefix + (element,))))
+
+                        #     temp_configurations.add((next_state, ()))
+                        #     temp_configurations.add((current_state, prefix + (element,)))
+                        # elif not satisfied and not extendable and fixable:
+                        #     if verbose:
+                        #         print("add", ((current_state, prefix + (element,))))
+                        #     temp_configurations.add((current_state, prefix + (element,)))
+                        # elif not satisfied and not extendable and not fixable:
+                        #     pass
+                for matcher, next_state in self.transitions_by_state[state]:
+                    satisfied, extendable, fixable = evaluate_matcher(matcher=matcher, tokens=list(prefix) + [element])
+
+                    if verbose:
+                        print(f"satisfied={satisfied}, extendable={extendable}, partial={fixable}")
+                    if satisfied and not extendable and not fixable:
                         if verbose:
-                            print(f"satisfied={satisfied}, extendable={extendable}, partial={fixable}")
-                        if satisfied and not extendable and not fixable:
-                            if verbose:
-                                print("add", (next_state, ()))
-                            temp_configurations.add((next_state, ()))
-                        elif satisfied and extendable and not fixable:
-                            if verbose:
-                                print("add", (next_state, ()))
-                                print("add", ((current_state, prefix + (element,))))
+                            print("add", (next_state, ()))
+                        temp_configurations.add((next_state, ()))
+                    elif satisfied and extendable and not fixable:
+                        if verbose:
+                            print("add", (next_state, ()))
+                            print("add", ((state, prefix + (element,))))
 
-                            temp_configurations.add((next_state, ()))
-                            temp_configurations.add((current_state, prefix + (element,)))
-                        elif not satisfied and not extendable and fixable:
-                            if verbose:
-                                print("add", ((current_state, prefix + (element,))))
-                            temp_configurations.add((current_state, prefix + (element,)))
-                        elif not satisfied and not extendable and not fixable:
-                            pass
+                        temp_configurations.add((next_state, ()))
+                        temp_configurations.add((state, prefix + (element,)))
+                    elif not satisfied and not extendable and fixable:
+                        if verbose:
+                            print("add", ((state, prefix + (element,))))
+                        temp_configurations.add((state, prefix + (element,)))
+                    elif not satisfied and not extendable and not fixable:
+                        pass
 
             #import time
             #time.sleep(5)
@@ -907,3 +934,126 @@ def evaluate_matcher(matcher: Callable, tokens: List[int]) -> Tuple[bool, bool, 
 #satisfied : the token list fully satisfies the matcher.
 #extendable : satisfied is True and there exists a longer list (adding tokens) that also satisfies the matcher.
 #fixable : satisfied is False but the list can be extended to a satisfieding list.
+
+
+def evaluate_matcher_batch(matcher: Callable, prefix: Tuple[int, ...], candidate_tokens: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+    meta = MATCHER_META.get(matcher)
+    if meta is None:
+        raise ValueError("Unknown matcher. Only matchers from TOKEN_INDICES_DICT are supported.")
+
+    candidates = np.asarray(candidate_tokens, dtype=np.int64)
+    prefix = np.asarray(prefix, dtype=np.int64)
+    n = len(candidates)
+    new_length = len(prefix) + 1
+
+    satisfied = np.zeros(n, dtype=bool)
+    extendable = np.zeros(n, dtype=bool)
+    fixable = np.zeros(n, dtype=bool)
+
+    if meta["type"] == "one_value_set":
+        valid_values = np.asarray(list(meta["set"]), dtype=np.int64)
+        prefix_valid = np.isin(prefix, valid_values).all()
+        candidate_valid = np.isin(candidates, valid_values)
+
+        satisfied = prefix_valid & candidate_valid
+        extendable = satisfied & (len(valid_values) > 0)
+
+        return satisfied, extendable, fixable
+
+    if meta["type"] == "fixed_length":
+        length = meta["length"]
+
+        if new_length > length:
+            return satisfied, extendable, fixable
+
+        first_valid = (
+            candidates == meta["first_token"]
+            if len(prefix) == 0
+            else np.full(n, prefix[0] == meta["first_token"])
+        )
+
+        if new_length == 1:
+            fixable = first_valid
+            return satisfied, extendable, fixable
+
+        group_ids = np.full(n, -1, dtype=np.int64)
+        for gid, values in meta["middle_groups"].items():
+            group_ids[np.isin(candidates, list(values))] = gid
+
+        prefix_middle = prefix[1:]
+        prefix_group_ids = np.full(len(prefix_middle), -1, dtype=np.int64)
+
+        for gid, values in meta["middle_groups"].items():
+            prefix_group_ids[np.isin(prefix_middle, list(values))] = gid
+
+        prefix_groups_valid = (
+            np.all(prefix_group_ids >= 0)
+            and len(np.unique(prefix_group_ids)) == len(prefix_group_ids)
+        )
+
+        if new_length < length:
+            candidate_group_valid = group_ids >= 0
+            candidate_group_unused = ~np.isin(group_ids, prefix_group_ids)
+
+            fixable = (
+                first_valid
+                & prefix_groups_valid
+                & candidate_group_valid
+                & candidate_group_unused
+            )
+
+            return satisfied, extendable, fixable
+
+        candidate_is_last = candidates == meta["last_token"]
+
+        satisfied = (
+            first_valid
+            & prefix_groups_valid
+            & candidate_is_last
+            & (len(prefix_group_ids) == 4)
+            & (len(np.unique(prefix_group_ids)) == 4)
+        )
+
+        return satisfied, extendable, fixable
+
+    if meta["type"] == "increasing_groups":
+        group_masks = meta["group_masks"]
+
+        if new_length > len(group_masks):
+            return satisfied, extendable, fixable
+
+        candidate_gid = np.full(n, -1, dtype=np.int64)
+
+        for gid, mask in enumerate(group_masks):
+            candidate_gid[mask(candidates)] = gid
+
+        prefix_gid = np.full(len(prefix), -1, dtype=np.int64)
+
+        for gid, mask in enumerate(group_masks):
+            prefix_gid[mask(prefix)] = gid
+
+        prefix_valid = (
+            np.all(prefix_gid >= 0)
+            and np.all(prefix_gid[1:] > prefix_gid[:-1])
+        )
+
+        if len(prefix) == 0:
+            increasing = candidate_gid >= 0
+        else:
+            increasing = (
+                (candidate_gid >= 0)
+                & (candidate_gid > prefix_gid[-1])
+            )
+
+        satisfied = prefix_valid & increasing
+
+        if new_length < len(group_masks):
+            extendable = (
+                satisfied
+                & (candidate_gid < len(group_masks) - 1)
+            )
+
+        return satisfied, extendable, fixable
+
+    raise ValueError("Unknown matcher type")

@@ -5,8 +5,7 @@ from pathlib import Path
 import logging
 import numpy as np
 
-# from life_sequence_dfa.dfa_idx import LIFESEQUENCEDFA
-from life_sequence_dfa.new.dfa import LIFESEQUENCEDFA
+from src.models.dfa import LIFESEQUENCEDFA
 dfa = LIFESEQUENCEDFA()
 
 HOME_PATH = str(Path())

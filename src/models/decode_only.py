@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,7 +12,7 @@ from typing import Optional
 """Custom code"""
 from src.models.transformer_utils import ReZero
 from src.models.transformer import Performer, NextTokenDecoder
-from src.models.dfa import LIFESEQUENCEDFA, evaluate_matcher
+from src.models.dfa import LIFESEQUENCEDFA, evaluate_matcher, evaluate_matcher_batch
 
 log = logging.getLogger(__name__)
 
@@ -536,6 +537,37 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         batch["padding_mask"] = padding_mask
         return batch, generated_mask
 
+    def validate_tokens_batched(self, indices, configurations, dfa, remaining_tokens):
+        # indices = np.asarray(indices, dtype=np.int64)
+        validated_indices = {}
+
+        for state, prefix, distance in configurations:
+            for matcher, next_state in dfa.transitions_by_state[state]:
+                satisfied, extendable, fixable = evaluate_matcher_batch(matcher, prefix, indices)
+
+                completed = satisfied & ~extendable
+                continuing = satisfied & extendable
+                partial = ~satisfied & fixable
+
+                if dfa.state_distances[next_state] <= remaining_tokens:
+                    for index in indices[completed | continuing]:
+                        index = int(index)
+                        validated_indices.setdefault(index, set()).add((next_state, (), dfa.state_distances[next_state]))
+
+                if distance <= remaining_tokens:
+                    for index in indices[continuing]:
+                        index = int(index)
+                        validated_indices.setdefault(index, set()).add((state, prefix + (index,), distance))
+
+                for index in indices[partial]:
+                    index = int(index)
+                    new_distance = distance - len(prefix) - 1
+
+                    if new_distance <= remaining_tokens:
+                        validated_indices.setdefault(index, set()).add((state, prefix + (index,), new_distance))
+
+        return validated_indices
+
     def validate_tokens(self, top_indices, configurations, dfa, remaining_tokens, beam_width):
         count_valid = 0
         count_topk = 0
@@ -750,6 +782,180 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         batch["input_ids"] = best_input_ids
         batch["padding_mask"] = best_padding_mask
         return batch, best_generated_mask
+
+    @torch.inference_mode()
+    def smc_sample(
+        self,
+        batch,
+        num_years,
+        ess_threshold=0.5,
+        verbose=False,
+        eoy_idx=3,
+        ending_idx=None,
+    ):
+        device = batch["input_ids"].device
+        input_ids = batch["input_ids"].clone()
+        padding_mask = batch["padding_mask"].clone()
+
+        B, _, max_len = input_ids.shape
+        vocab_size = self.num_outputs
+
+        if not 0 < ess_threshold <= 1:
+            raise ValueError("ess_threshold must be in (0, 1]")
+
+        dfa = LIFESEQUENCEDFA()
+        indices = np.arange(vocab_size, dtype=np.int64)
+
+        generated_mask = torch.zeros_like(padding_mask)
+        year_counters = torch.zeros(B, dtype=torch.long, device=device)
+        done = torch.zeros(B, dtype=torch.bool, device=device)
+
+        # Weights accumulated since the most recent resampling.
+        log_weights = torch.zeros(B, dtype=torch.float64, device=device)
+
+        # Cumulative importance correction associated with each trajectory.
+        trajectory_log_weights = torch.zeros(B, dtype=torch.float64, device=device)
+
+        if ending_idx is not None:
+            end_counters = torch.zeros(B, dtype=torch.long, device=device)
+
+        configurations = []
+
+        for b in range(B):
+            length = int(padding_mask[b].sum().item())
+            initial_sequence = input_ids[b, 0, :length].long().cpu().tolist()
+            configs = dfa.get_initial_conf(initial_sequence, verbose=False)
+
+            configurations.append({(state, prefix, dfa.state_distances[state]) for state, prefix in configs})
+
+        for step in range(max_len):
+            next_positions = padding_mask.sum(dim=1).long()
+            done |= next_positions >= max_len
+
+            if done.all():
+                break
+
+            active = torch.where(~done)[0]
+            active_next_positions = next_positions[active]
+
+            logits = self({
+                "input_ids": input_ids[active],
+                "padding_mask": padding_mask[active],
+            })
+
+            rows = torch.arange(len(active), device=device)
+            next_logits = logits[rows, active_next_positions - 1]
+
+            # Log probabilities under the original model, normalized
+            # over the entire vocabulary.
+            model_log_probs = F.log_softmax(next_logits, dim=-1)
+
+            for row, b_tensor in enumerate(active):
+                b = int(b_tensor.item())
+                next_pos = int(active_next_positions[row].item())
+                remaining_tokens = max_len - next_pos
+
+                validated = self.validate_tokens_batched(
+                    indices,
+                    configurations[b],
+                    dfa,
+                    remaining_tokens,
+                )
+
+                if not validated:
+                    raise RuntimeError(f"DFA found no valid continuation for particle {b}")
+
+                valid_tokens = torch.tensor(list(validated.keys()), dtype=torch.long, device=device)
+
+                # Original model probabilities for valid tokens.
+                valid_model_log_probs = model_log_probs[row, valid_tokens]
+
+                incremental_log_weight = torch.logsumexp(valid_model_log_probs, dim=0).double()
+
+                proposal_log_probs = valid_model_log_probs - incremental_log_weight
+                proposal_probs = proposal_log_probs.exp()
+
+                sampled_position = torch.multinomial(
+                    proposal_probs,
+                    num_samples=1,
+                ).item()
+
+                new_token = int(valid_tokens[sampled_position].item())
+
+                log_weights[b] += incremental_log_weight
+                trajectory_log_weights[b] += incremental_log_weight
+
+                configurations[b] = validated[new_token]
+
+                increment = int(new_token == eoy_idx)
+                year_counters[b] += increment
+
+                prev_year = input_ids[b, 1, next_pos - 1]
+                prev_age = input_ids[b, 2, next_pos - 1]
+
+                input_ids[b, 0, next_pos] = new_token
+                input_ids[b, 1, next_pos] = prev_year + increment
+                input_ids[b, 2, next_pos] = prev_age + increment
+
+                padding_mask[b, next_pos] = 1
+                generated_mask[b, next_pos] = 1
+
+                if ending_idx is not None:
+                    end_counters[b] += int(new_token == ending_idx)
+                    done[b] = end_counters[b] > num_years
+                else:
+                    done[b] = year_counters[b] > num_years
+
+                if next_pos + 1 >= max_len:
+                    done[b] = True
+
+            # Normalized SMC weights.
+            normalized_weights = F.softmax(log_weights, dim=0)
+
+            # ESS = 1 / sum(w_i^2)
+            ess = 1.0 / normalized_weights.square().sum()
+
+            if verbose:
+                print(
+                    f"Step {step}: "
+                    f"{done.sum().item()}/{B} particles done, "
+                    f"ESS={ess.item():.2f}/{B}"
+                )
+
+            if ess < ess_threshold * B and not done.all():
+                ancestors = torch.multinomial(
+                    normalized_weights,
+                    num_samples=B,
+                    replacement=True,
+                )
+
+                input_ids = input_ids[ancestors].clone()
+                padding_mask = padding_mask[ancestors].clone()
+                generated_mask = generated_mask[ancestors].clone()
+                year_counters = year_counters[ancestors].clone()
+                done = done[ancestors].clone()
+                trajectory_log_weights = trajectory_log_weights[ancestors].clone()
+
+                if ending_idx is not None:
+                    end_counters = end_counters[ancestors].clone()
+
+                configurations = [
+                    configurations[int(a.item())].copy()
+                    for a in ancestors
+                ]
+
+                # Equal weights immediately after resampling.
+                log_weights.zero_()
+
+                print(f"Step {step}: resampled particles")
+
+        batch["input_ids"] = input_ids
+        batch["padding_mask"] = padding_mask
+
+        # Final normalized SMC weights since the last resampling.
+        final_weights = F.softmax(log_weights, dim=0)
+
+        return batch, generated_mask, final_weights, trajectory_log_weights
 
     def configure_optimizers(self):
         """Configuration of the Optimizer and the Learning Rate Scheduler."""

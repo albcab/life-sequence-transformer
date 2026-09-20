@@ -74,6 +74,57 @@ def main(cfg):
     if len(ids) != len(set(ids)):
         raise ValueError("Generation input must contain unique USER_ID values")
 
+    for idx, trunc_year in tqdm(
+        zip(ids, trunc_years),
+        total=len(ids),
+        desc="Generating users",
+        unit="user",
+        dynamic_ncols=True,
+    ):
+        index_file = dir_name / f"{idx}_index.csv"
+        token_file = dir_name / f"{idx}_token.csv"
+
+        if index_file.exists() and token_file.exists():
+            tqdm.write(f"Files for id={idx} already exist, skipping...")
+            continue
+
+        tqdm.write(f"Starting id={idx} w/o {trunc_year} years...")
+        
+        dataloader = data.single_idx_dataloader(
+            idx=idx,
+            trunc_years=trunc_year,
+            reps=cfg.generate.dataloader.reps * cfg.datamodule.batch_size,
+            split=cfg.generate.dataloader.split)
+
+        name = None
+        cum_rows = []
+        for batch in dataloader:
+
+            if name is None:
+                name = batch['sequence_id'][0].item()
+                original_sequence = batch['original_sequence'][0].detach().cpu().numpy()
+                known = batch['padding_mask'][0].detach().clone().cpu().bool()
+
+            batch = model.transfer_batch_to_device(batch, model.device, dataloader_idx=0)
+            
+            sample_batch, _, final_weights, trajectory_log_weights = model.smc_sample(
+                batch,
+                num_years=cfg.generate.sampler.num_years or trunc_year,
+                ess_threshold=cfg.generate.sampler.ess_threshold,
+                verbose=cfg.generate.sampler.verbose,
+                eoy_idx=eoy_idx,
+            )
+            rows = sample_batch['input_ids'][:, 0].detach().cpu().numpy()
+            rows[0, known] = 0
+            cum_rows.append(rows)
+            print("weights=", final_weights)
+            print("trajectory weights=", trajectory_log_weights)
+
+        data_rows = np.vstack([original_sequence] + cum_rows)
+        np.savetxt(index_file, data_rows, fmt="%d", delimiter=",")
+        np.savetxt(token_file, np.vectorize(lambda i: index2token[i])(data_rows), fmt="%s", delimiter=",")
+
+""" ## BEAM SEARCH
     pending_ids = []
     pending_trunc_years = []
     output_paths = {}
@@ -177,7 +228,7 @@ def main(cfg):
             result["generated_rows"],
             index2token,
         )
-
+"""
 
 if __name__ == "__main__":
     main()

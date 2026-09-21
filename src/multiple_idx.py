@@ -64,6 +64,7 @@ def main(cfg):
     token2index = data.vocabulary.token2index
     index2token = data.vocabulary.index2token
     eoy_idx = token2index["[EOY]"]
+    eol_idx = token2index["[EOL]"]
 
     ids_df = pd.read_csv(cfg.generate.dataloader.file_name)
     ids = [int(idx) for idx in ids_df.USER_ID.tolist()]
@@ -112,13 +113,17 @@ def main(cfg):
             
             sample_batch, _, final_weights, trajectory_log_weights = model.smc_sample(
                 batch,
-                num_years=cfg.generate.sampler.num_years or trunc_year,
+                num_years=(
+                    trunc_year if cfg.generate.sampler.num_years is None
+                    else cfg.generate.sampler.num_years
+                ),
                 ess_threshold=cfg.generate.sampler.ess_threshold,
                 verbose=cfg.generate.sampler.verbose,
                 eoy_idx=eoy_idx,
+                ending_idx=eol_idx,
             )
             rows = sample_batch['input_ids'][:, 0].detach().cpu().numpy()
-            rows[0, known] = 0
+            rows[:, known] = 0
             cum_rows.append(rows)
             cum_weights.append(final_weights.detach().cpu().numpy())
 

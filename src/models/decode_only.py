@@ -542,7 +542,8 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         validated_indices = {}
 
         for state, prefix, distance in configurations:
-            for matcher, next_state in dfa.transitions_by_state[state]:
+            # Terminal states need not have outgoing transitions.
+            for matcher, next_state in dfa.transitions_by_state.get(state, ()):
                 satisfied, extendable, fixable = evaluate_matcher_batch(matcher, prefix, indices)
 
                 completed = satisfied & ~extendable
@@ -791,8 +792,14 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         ess_threshold=0.5,
         verbose=False,
         eoy_idx=3,
-        ending_idx=None,
+        ending_idx=2,
     ):
+        """Sample weighted lives, retaining ended particles as absorbing states.
+
+        The first EOL is scored normally. Finished particles receive no further
+        tokens or importance increments, but remain eligible for resampling.
+        Preserve the existing EOY-count stopping convention (> num_years).
+        """
         device = batch["input_ids"].device
         input_ids = batch["input_ids"].clone()
         padding_mask = batch["padding_mask"].clone()
@@ -816,9 +823,6 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         # Cumulative importance correction associated with each trajectory.
         trajectory_log_weights = torch.zeros(B, dtype=torch.float64, device=device)
 
-        if ending_idx is not None:
-            end_counters = torch.zeros(B, dtype=torch.long, device=device)
-
         configurations = []
 
         for b in range(B):
@@ -827,6 +831,9 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
             configs = dfa.get_initial_conf(initial_sequence, verbose=False)
 
             configurations.append({(state, prefix, dfa.state_distances[state]) for state, prefix in configs})
+
+            if ending_idx is not None and initial_sequence and initial_sequence[-1] == ending_idx:
+                done[b] = True
 
         for step in range(max_len):
             next_positions = padding_mask.sum(dim=1).long()
@@ -900,11 +907,9 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
                 padding_mask[b, next_pos] = 1
                 generated_mask[b, next_pos] = 1
 
-                if ending_idx is not None:
-                    end_counters[b] += int(new_token == ending_idx)
-                    done[b] = end_counters[b] > num_years
-                else:
-                    done[b] = year_counters[b] > num_years
+                done[b] = year_counters[b] > num_years
+                if ending_idx is not None and new_token == ending_idx:
+                    done[b] = True
 
                 if next_pos + 1 >= max_len:
                     done[b] = True
@@ -935,9 +940,6 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
                 year_counters = year_counters[ancestors].clone()
                 done = done[ancestors].clone()
                 trajectory_log_weights = trajectory_log_weights[ancestors].clone()
-
-                if ending_idx is not None:
-                    end_counters = end_counters[ancestors].clone()
 
                 configurations = [
                     configurations[int(a.item())].copy()

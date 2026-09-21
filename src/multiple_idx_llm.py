@@ -101,7 +101,7 @@ def main(cfg):
     model.eval()
 
     dir_name = Path(
-        "generated_new",
+        "generated",
         cfg.implementation,
         cfg.name,
         cfg.generate.dataloader.file_name.rsplit(".", 1)[0],

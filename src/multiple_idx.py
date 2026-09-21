@@ -53,7 +53,7 @@ def main(cfg):
     )
 
     dir_name = Path(
-        "generated_new",
+        "generated",
         cfg.implementation,
         cfg.name,
         cfg.generate.dataloader.file_name.rsplit(".", 1)[0],
@@ -83,13 +83,15 @@ def main(cfg):
     ):
         index_file = dir_name / f"{idx}_index.csv"
         token_file = dir_name / f"{idx}_token.csv"
+        weight_file = dir_name / f"{idx}_weights.csv"
 
-        if index_file.exists() and token_file.exists():
+        if index_file.exists() and token_file.exists() and weight_file.exists():
             tqdm.write(f"Files for id={idx} already exist, skipping...")
             continue
 
         tqdm.write(f"Starting id={idx} w/o {trunc_year} years...")
-        
+
+        assert cfg.generate.dataloader.reps == 1, "SMC works only on one batch per person."
         dataloader = data.single_idx_dataloader(
             idx=idx,
             trunc_years=trunc_year,
@@ -98,6 +100,7 @@ def main(cfg):
 
         name = None
         cum_rows = []
+        cum_weights = []
         for batch in dataloader:
 
             if name is None:
@@ -117,12 +120,13 @@ def main(cfg):
             rows = sample_batch['input_ids'][:, 0].detach().cpu().numpy()
             rows[0, known] = 0
             cum_rows.append(rows)
-            print("weights=", final_weights)
-            print("trajectory weights=", trajectory_log_weights)
+            cum_weights.append(final_weights.detach().cpu().numpy())
 
         data_rows = np.vstack([original_sequence] + cum_rows)
+        weights = np.concatenate(cum_weights)
         np.savetxt(index_file, data_rows, fmt="%d", delimiter=",")
         np.savetxt(token_file, np.vectorize(lambda i: index2token[i])(data_rows), fmt="%s", delimiter=",")
+        np.savetxt(weight_file, weights, fmt="%.10g")
 
 """ ## BEAM SEARCH
     pending_ids = []

@@ -376,6 +376,10 @@ class LIFESEQUENCEDFA:
             ("qm18", TOKEN_INDICES_DICT["eol"]): "qfinal",
             ("qm16", TOKEN_INDICES_DICT["eoy"]): "qm19",
             ("qm16", TOKEN_INDICES_DICT["eol"]): "qfinal",
+            # add self loops for qfinal
+            ("qfinal", TOKEN_INDICES_DICT["eol"]): "qfinal",
+            ("qfinal", TOKEN_INDICES_DICT["eoy"]): "qfinal",
+            
         }
 
         self.transitions_by_state = {}

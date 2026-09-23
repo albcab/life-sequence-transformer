@@ -21,8 +21,8 @@ callbacks.checkpoint.dirpath: ${ckpt_path}
 #same as pretraining ckpt_path: ${user_path}/${local_path}/checkpoints/${implementation}/${name}/${version}/...
 model_path: ././checkpoints/vno12_norm_pos_100sp/decoder_only_dim/1.0/last.ckpt
 
-# datamodule:
-#   batch_size: 8
+datamodule:
+  batch_size: 4 # people per SMC batch
 generate:
   dataloader:
     file_name: pensioner_test_ids_clean.csv
@@ -33,6 +33,7 @@ generate:
     offset: 1
     split: test
   sampler:
+    nb_particles: 32 # independent particle population per person
     num_years: null
     temp: 1.0
     verbose: false

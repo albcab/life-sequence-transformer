@@ -793,19 +793,40 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
         verbose=False,
         eoy_idx=3,
         ending_idx=2,
+        nb_particles=None,
     ):
         """Sample weighted lives, retaining ended particles as absorbing states.
 
         The first EOL is scored normally. Finished particles receive no further
         tokens or importance increments, but remain eligible for resampling.
         Preserve the existing EOY-count stopping convention (> num_years).
+        With nb_particles set, each input row is a separate person. Outputs
+        are flattened in person-major order; weights normalize per person.
+        Without it, input rows retain the legacy single-person population API.
         """
         device = batch["input_ids"].device
+        n_users = batch["input_ids"].shape[0] if nb_particles is not None else 1
+        particles = batch["input_ids"].shape[0] if nb_particles is None else nb_particles
+        if not isinstance(particles, int) or particles < 1 or n_users < 1:
+            raise ValueError("nb_particles and the number of input users must be positive")
+        if nb_particles is not None:
+            batch = {
+                key: value.repeat_interleave(particles, dim=0)
+                if isinstance(value, torch.Tensor) and value.ndim and value.shape[0] == n_users
+                else value
+                for key, value in batch.items()
+            }
         input_ids = batch["input_ids"].clone()
         padding_mask = batch["padding_mask"].clone()
 
         B, _, max_len = input_ids.shape
         vocab_size = self.num_outputs
+        year_limits = torch.as_tensor(num_years, device=device)
+        if year_limits.ndim == 0:
+            year_limits = year_limits.expand(n_users)
+        if year_limits.shape != (n_users,):
+            raise ValueError("num_years must be scalar or contain one value per person")
+        year_limits = year_limits.repeat_interleave(particles)
 
         if not 0 < ess_threshold <= 1:
             raise ValueError("ess_threshold must be in (0, 1]")
@@ -907,32 +928,38 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
                 padding_mask[b, next_pos] = 1
                 generated_mask[b, next_pos] = 1
 
-                done[b] = year_counters[b] > num_years
+                done[b] = year_counters[b] > year_limits[b]
                 if ending_idx is not None and new_token == ending_idx:
                     done[b] = True
 
                 if next_pos + 1 >= max_len:
                     done[b] = True
 
-            # Normalized SMC weights.
-            normalized_weights = F.softmax(log_weights, dim=0)
+            # Each person has a separate SMC population, sharing only inference.
+            grouped_weights = log_weights.view(n_users, particles)
+            normalized_weights = F.softmax(grouped_weights, dim=1)
 
             # ESS = 1 / sum(w_i^2)
-            ess = 1.0 / normalized_weights.square().sum()
+            ess = 1.0 / normalized_weights.square().sum(dim=1)
+            finished_users = done.view(n_users, particles).all(dim=1)
 
             if verbose:
                 print(
                     f"Step {step}: "
                     f"{done.sum().item()}/{B} particles done, "
-                    f"ESS={ess.item():.2f}/{B}"
+                    f"ESS/person={ess.tolist()}/{particles}"
                 )
 
-            if ess < ess_threshold * B and not done.all():
-                ancestors = torch.multinomial(
-                    normalized_weights,
-                    num_samples=B,
-                    replacement=True,
-                )
+            resample_users = torch.where(
+                (ess < ess_threshold * particles) & ~finished_users
+            )[0]
+            if len(resample_users):
+                ancestors = torch.arange(B, device=device).view(n_users, particles)
+                for user in resample_users.tolist():
+                    ancestors[user] = user * particles + torch.multinomial(
+                        normalized_weights[user], num_samples=particles, replacement=True,
+                    )
+                ancestors = ancestors.flatten()
 
                 input_ids = input_ids[ancestors].clone()
                 padding_mask = padding_mask[ancestors].clone()
@@ -946,16 +973,17 @@ class GeneratorDecoderOnly(TransformerDecoderOnly):
                     for a in ancestors
                 ]
 
-                # Equal weights immediately after resampling.
-                log_weights.zero_()
+                # Only resampled populations reset their importance weights.
+                grouped_weights[resample_users] = 0
 
-                print(f"Step {step}: resampled particles")
+                if verbose:
+                    print(f"Step {step}: resampled users {resample_users.tolist()}")
 
         batch["input_ids"] = input_ids
         batch["padding_mask"] = padding_mask
 
         # Final normalized SMC weights since the last resampling.
-        final_weights = F.softmax(log_weights, dim=0)
+        final_weights = F.softmax(log_weights.view(n_users, particles), dim=1).flatten()
 
         return batch, generated_mask, final_weights, trajectory_log_weights
 

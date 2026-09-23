@@ -75,169 +75,61 @@ def main(cfg):
     if len(ids) != len(set(ids)):
         raise ValueError("Generation input must contain unique USER_ID values")
 
-    for idx, trunc_year in tqdm(
-        zip(ids, trunc_years),
-        total=len(ids),
-        desc="Generating users",
-        unit="user",
-        dynamic_ncols=True,
-    ):
-        index_file = dir_name / f"{idx}_index.csv"
-        token_file = dir_name / f"{idx}_token.csv"
-        weight_file = dir_name / f"{idx}_weights.csv"
+    nb_particles = int(cfg.generate.sampler.nb_particles)
+    if nb_particles < 1:
+        raise ValueError("nb_particles must be positive")
+    if cfg.generate.dataloader.reps != 1:
+        raise ValueError("Use nb_particles for SMC; dataloader.reps must be 1")
 
-        if index_file.exists() and token_file.exists() and weight_file.exists():
+    pending_ids, pending_years = [], []
+    output_paths = {}
+    for idx, years in zip(ids, trunc_years):
+        paths = tuple(dir_name / f"{idx}_{kind}.csv" for kind in ("index", "token", "weights"))
+        if all(path.exists() for path in paths):
             tqdm.write(f"Files for id={idx} already exist, skipping...")
             continue
-
-        tqdm.write(f"Starting id={idx} w/o {trunc_year} years...")
-
-        assert cfg.generate.dataloader.reps == 1, "SMC works only on one batch per person."
-        dataloader = data.single_idx_dataloader(
-            idx=idx,
-            trunc_years=trunc_year,
-            reps=cfg.generate.dataloader.reps * cfg.datamodule.batch_size,
-            split=cfg.generate.dataloader.split)
-
-        name = None
-        cum_rows = []
-        cum_weights = []
-        for batch in dataloader:
-
-            if name is None:
-                name = batch['sequence_id'][0].item()
-                original_sequence = batch['original_sequence'][0].detach().cpu().numpy()
-                known = batch['padding_mask'][0].detach().clone().cpu().bool()
-
-            batch = model.transfer_batch_to_device(batch, model.device, dataloader_idx=0)
-            
-            sample_batch, _, final_weights, trajectory_log_weights = model.smc_sample(
-                batch,
-                num_years=(
-                    trunc_year if cfg.generate.sampler.num_years is None
-                    else cfg.generate.sampler.num_years
-                ),
-                ess_threshold=cfg.generate.sampler.ess_threshold,
-                verbose=cfg.generate.sampler.verbose,
-                eoy_idx=eoy_idx,
-                ending_idx=eol_idx,
-            )
-            rows = sample_batch['input_ids'][:, 0].detach().cpu().numpy()
-            rows[:, known] = 0
-            cum_rows.append(rows)
-            cum_weights.append(final_weights.detach().cpu().numpy())
-
-        data_rows = np.vstack([original_sequence] + cum_rows)
-        weights = np.concatenate(cum_weights)
-        np.savetxt(index_file, data_rows, fmt="%d", delimiter=",")
-        np.savetxt(token_file, np.vectorize(lambda i: index2token[i])(data_rows), fmt="%s", delimiter=",")
-        np.savetxt(weight_file, weights, fmt="%.10g")
-
-""" ## BEAM SEARCH
-    pending_ids = []
-    pending_trunc_years = []
-    output_paths = {}
-    for idx, trunc_year in zip(ids, trunc_years):
-        index_file = dir_name / f"{idx}_index.csv"
-        token_file = dir_name / f"{idx}_token.csv"
-        if index_file.exists() and token_file.exists():
-            print(f"Files for id={idx} already exist, skipping...")
-            continue
         pending_ids.append(idx)
-        pending_trunc_years.append(trunc_year)
-        output_paths[idx] = (index_file, token_file)
-
+        pending_years.append(years)
+        output_paths[idx] = paths
     if not pending_ids:
         print("All requested IDs have already been generated.")
         return
 
-    configured_samples = cfg.generate.dataloader.get("samples_per_id")
-    samples_per_id = (
-        int(configured_samples)
-        if configured_samples is not None
-        else int(cfg.generate.dataloader.reps * cfg.datamodule.batch_size)
-    )
-    if samples_per_id < 1:
-        raise ValueError("samples_per_id must be at least 1")
-
-    print(
-        f"Generating {samples_per_id} sequence(s) for {len(pending_ids)} IDs "
-        f"in batches of up to {cfg.datamodule.batch_size}."
-    )
+    # Load each person once; the sampler creates their particle population.
     dataloader = data.multi_idx_dataloader(
-        idxs=pending_ids,
-        trunc_years=pending_trunc_years,
-        reps=samples_per_id,
+        idxs=pending_ids, reps=1, trunc_years=pending_years,
         split=cfg.generate.dataloader.split,
     )
-
-    trunc_year_by_id = dict(zip(pending_ids, pending_trunc_years))
-    results = {
-        idx: {"original_sequence": None, "generated_rows": []}
-        for idx in pending_ids
-    }
-
+    years_by_id = dict(zip(pending_ids, pending_years))
     model.to(cfg.trainer.accelerator)
     model.eval()
-    started_ids = set()
-    with tqdm(
-        total=len(dataloader.dataset),
-        desc="Generating sequences",
-        unit="seq",
-        dynamic_ncols=True,
-    ) as progress:
-        for batch in dataloader:
+    print(f"Batching up to {cfg.datamodule.batch_size} people, {nb_particles} particles/person.")
+    with tqdm(total=len(pending_ids), desc="Generating users", unit="user") as progress:
+        for batch_number, batch in enumerate(dataloader, start=1):
             batch_ids = [int(idx) for idx in batch["sequence_id"].tolist()]
-            for idx in batch_ids:
-                if idx not in started_ids:
-                    progress.write(
-                        f"Starting id={idx} w/o {trunc_year_by_id[idx]} years..."
-                    )
-                    started_ids.add(idx)
-
-            known_masks = batch["padding_mask"].detach().clone().cpu().bool().numpy()
-            original_sequences = batch["original_sequence"].detach().cpu().numpy()
-
-            if cfg.generate.sampler.num_years is None:
-                generation_years = [trunc_year_by_id[idx] for idx in batch_ids]
-            else:
-                generation_years = int(cfg.generate.sampler.num_years)
-
-            batch = model.transfer_batch_to_device(
-                batch, model.device, dataloader_idx=0
-            )
-            sample_batch, _ = model.beam_search(
-                batch,
-                num_years=generation_years,
-                beam_width=cfg.generate.sampler.beam_width,
-                length_penalty=cfg.generate.sampler.length_penalty,
+            originals = batch["original_sequence"].detach().cpu().numpy()
+            known = batch["padding_mask"].detach().cpu().bool().numpy()
+            generation_years = cfg.generate.sampler.num_years
+            if generation_years is None:
+                generation_years = [years_by_id[idx] for idx in batch_ids]
+            progress.write(f"Starting batch {batch_number}/{len(dataloader)}: IDs {batch_ids}")
+            batch = model.transfer_batch_to_device(batch, model.device, dataloader_idx=0)
+            sample_batch, _, final_weights, _ = model.smc_sample(
+                batch, num_years=generation_years, nb_particles=nb_particles,
+                ess_threshold=cfg.generate.sampler.ess_threshold,
                 verbose=cfg.generate.sampler.verbose,
-                eoy_idx=eoy_idx,
+                eoy_idx=eoy_idx, ending_idx=eol_idx,
             )
-            generated = sample_batch["input_ids"][:, 0].detach().cpu().numpy()
-
+            rows = sample_batch["input_ids"][:, 0].detach().cpu().numpy()
+            rows = rows.reshape(len(batch_ids), nb_particles, -1)
+            weights = final_weights.detach().cpu().numpy().reshape(len(batch_ids), nb_particles)
             for row, idx in enumerate(batch_ids):
-                result = results[idx]
-                if result["original_sequence"] is None:
-                    result["original_sequence"] = original_sequences[row]
-                    if not result["generated_rows"]:
-                        generated[row, known_masks[row]] = 0
-                result["generated_rows"].append(generated[row].copy())
+                rows[row][:, known[row]] = 0
+                index_file, token_file, weight_file = output_paths[idx]
+                save_result(index_file, token_file, originals[row], list(rows[row]), index2token)
+                np.savetxt(weight_file, weights[row], fmt="%.10g")
+            progress.set_postfix(batch=f"{batch_number}/{len(dataloader)}", particles=nb_particles)
             progress.update(len(batch_ids))
-
-    for idx, result in results.items():
-        if len(result["generated_rows"]) != samples_per_id:
-            raise RuntimeError(
-                f"Expected {samples_per_id} generations for id={idx}, got "
-                f"{len(result['generated_rows'])}"
-            )
-        save_result(
-            *output_paths[idx],
-            result["original_sequence"],
-            result["generated_rows"],
-            index2token,
-        )
-"""
 
 if __name__ == "__main__":
     main()

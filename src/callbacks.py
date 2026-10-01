@@ -615,5 +615,6 @@ class RebalancedSampling(pl.Callback):
 class GradientNormMonitor(pl.Callback):
     def on_before_optimizer_step(self, trainer, pl_module, optimizer):
         # Compute gradient norms
-        norms = grad_norm(pl_module.transformer, norm_type=2)
+        monitored_model = getattr(pl_module, "transformer", pl_module)
+        norms = grad_norm(monitored_model, norm_type=2)
         pl_module.log_dict(norms)

@@ -164,21 +164,9 @@ class HFCausalLM(pl.LightningModule):
         }
 
     def init_metrics(self):
-        self.accuracy = torchmetrics.Accuracy(
-            task="multiclass",
-            num_classes=self.num_outputs,
-            multidim_average="global",
-            ignore_index=-100,
-            top_k=5,
-        )
-
-        self.accuracy1 = torchmetrics.Accuracy(
-            task="multiclass",
-            num_classes=self.num_outputs,
-            multidim_average="global",
-            ignore_index=-100,
-            top_k=1,
-        )
+        # Accumulate token correctness without vocabulary-sized one-hot tensors.
+        self.accuracy = torchmetrics.MeanMetric()
+        self.accuracy1 = torchmetrics.MeanMetric()
 
     def log_metrics(
         self,
@@ -219,9 +207,14 @@ class HFCausalLM(pl.LightningModule):
             sync_dist=True,
         )
 
+        valid = shift_targets != -100
+        top_tokens = shift_predictions.topk(min(5, shift_predictions.shape[-1]), dim=-1).indices
+        self.accuracy((top_tokens == shift_targets.unsqueeze(-1)).any(dim=-1)[valid].float())
+        self.accuracy1((top_tokens[..., 0] == shift_targets)[valid].float())
+
         self.log(
             f"{stage}/accuracy",
-            self.accuracy(shift_predictions, shift_targets),
+            self.accuracy,
             on_step=on_step,
             on_epoch=on_epoch,
             sync_dist=True,
@@ -229,7 +222,7 @@ class HFCausalLM(pl.LightningModule):
 
         self.log(
             f"{stage}/accuracy1",
-            self.accuracy1(shift_predictions, shift_targets),
+            self.accuracy1,
             on_step=on_step,
             on_epoch=on_epoch,
             sync_dist=True,

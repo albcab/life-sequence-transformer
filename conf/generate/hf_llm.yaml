@@ -25,7 +25,7 @@ ckpt_path: ${last_ckpt:${callbacks.checkpoint.dirpath}}
 callbacks.checkpoint.dirpath: ${ckpt_path}
 
 # Checkpoint from the trained HFCausalLM
-model_path: null #./checkpoints/hf_causal_lm/hf_causal_lm/1.0/last.ckpt
+model_path: ./checkpoints/hf_causal_lm/hf_causal_lm/1.0/last.ckpt
 
 
 ###########################
@@ -99,7 +99,7 @@ model:
 #################### TRAINER
 
 trainer:
-  accelerator: "cpu"
+  accelerator: "cuda"
   devices: 1
 
   callbacks:

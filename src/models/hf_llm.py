@@ -227,3 +227,208 @@ class HFCausalLM(pl.LightningModule):
             on_epoch=on_epoch,
             sync_dist=True,
         )
+
+    @torch.inference_mode()
+    def smc_sample(
+        self,
+        input_ids,
+        attention_mask,
+        automata,
+        tokenizer,
+        lexer,
+        num_years,
+        eoy_idx,
+        valid_token_ids,
+        nb_particles=32,
+        max_new_tokens=50,
+        ess_threshold=0.5,
+        max_stack_height=12,
+        max_steps=100000,
+        verbose=False,
+    ):
+        """
+        SMC sampling from the LLM conditioned on the automaton.
+
+        The proposal is the LLM distribution restricted to automaton-valid
+        tokens. The incremental importance weight is the probability mass of
+        the valid tokens under the original LLM distribution.
+
+        Generation stops for a particle once its generated EOY count is
+        greater than num_years.
+        """
+
+        device = input_ids.device
+        vocab_size = self.num_outputs
+        eos_token_id = tokenizer.eos_token_id
+        bos = tokenizer.bos_token_id is not None
+
+        if input_ids.shape[0] != 1:
+            raise ValueError("smc_sample expects exactly one prompt")
+        if nb_particles < 1:
+            raise ValueError("nb_particles must be positive")
+        if not 0 < ess_threshold <= 1:
+            raise ValueError("ess_threshold must be in (0, 1]")
+
+        prompt_len = input_ids.shape[1]
+
+        input_ids = input_ids.repeat(nb_particles, 1)
+        attention_mask = attention_mask.repeat(nb_particles, 1)
+
+        done = torch.zeros(nb_particles, dtype=torch.bool, device=device)
+        year_counters = torch.zeros(nb_particles, dtype=torch.long, device=device)
+        year_limits = torch.full(
+            (nb_particles,), int(num_years), dtype=torch.long, device=device
+        )
+        log_weights = torch.zeros(nb_particles, dtype=torch.float64, device=device)
+        trajectory_log_weights = torch.zeros(
+            nb_particles, dtype=torch.float64, device=device
+        )
+
+        for step in range(max_new_tokens):
+            if done.all():
+                break
+
+            active = torch.where(~done)[0]
+
+            outputs = self.model(
+                input_ids=input_ids[active],
+                attention_mask=attention_mask[active],
+            )
+            logits = outputs.logits[:, -1, :]
+            model_log_probs = torch.log_softmax(logits, dim=-1)
+
+            remaining_tokens = max_new_tokens - step - 1
+            sampled_tokens = {}
+
+            for row, particle_tensor in enumerate(active):
+                particle = int(particle_tensor.item())
+
+                generated_ids = input_ids[particle, prompt_len:]
+                generated_mask = attention_mask[particle, prompt_len:].bool()
+                generated_ids = generated_ids[generated_mask]
+
+                current_str = "".join(
+                    tokenizer.decode([token_id], skip_special_tokens=False)
+                    for token_id in generated_ids.tolist()
+                )
+
+                valid_tokens = []
+
+                for token_id in valid_token_ids:
+                    decoded = tokenizer.decode(
+                        [token_id],
+                        skip_special_tokens=False,
+                    )
+
+                    config, distance = lexer.get_configurations(
+                        t=current_str + decoded,
+                        q=automata.initial_state,
+                        gamma=[automata.stack_bottom],
+                        s_pref="",
+                        max_stack_height=max_stack_height,
+                        max_steps=max_steps,
+                        return_first=True,
+                        remaining_tokens=remaining_tokens,
+                        bos=bos,
+                        search_strategy="dfs",
+                    )
+
+                    if token_id == eos_token_id and distance != 0:
+                        continue
+
+                    if config != ():
+                        valid_tokens.append(token_id)
+
+                if not valid_tokens:
+                    raise RuntimeError(
+                        "Automaton found no valid continuation for "
+                        f"particle {particle} at step {step}"
+                    )
+
+                valid_tokens = torch.tensor(
+                    valid_tokens,
+                    dtype=torch.long,
+                    device=device,
+                )
+                valid_model_log_probs = model_log_probs[row, valid_tokens]
+
+                incremental_log_weight = torch.logsumexp(
+                    valid_model_log_probs,
+                    dim=0,
+                ).double()
+
+                proposal_log_probs = (
+                    valid_model_log_probs - incremental_log_weight
+                )
+
+                sampled_position = torch.multinomial(
+                    proposal_log_probs.exp(),
+                    num_samples=1,
+                ).item()
+                token_id = int(valid_tokens[sampled_position].item())
+
+                sampled_tokens[particle] = token_id
+
+                log_weights[particle] += incremental_log_weight
+                trajectory_log_weights[particle] += incremental_log_weight
+
+                increment = int(token_id == eoy_idx)
+                year_counters[particle] += increment
+                done[particle] = year_counters[particle] > year_limits[particle]
+
+            next_tokens = torch.full(
+                (nb_particles, 1),
+                tokenizer.pad_token_id,
+                dtype=input_ids.dtype,
+                device=device,
+            )
+            next_attention = torch.zeros(
+                (nb_particles, 1),
+                dtype=attention_mask.dtype,
+                device=device,
+            )
+
+            for particle, token_id in sampled_tokens.items():
+                next_tokens[particle, 0] = token_id
+                next_attention[particle, 0] = 1
+
+            input_ids = torch.cat([input_ids, next_tokens], dim=1)
+            attention_mask = torch.cat([attention_mask, next_attention], dim=1)
+
+            normalized_weights = torch.softmax(log_weights, dim=0)
+            ess = 1.0 / normalized_weights.square().sum()
+
+            if verbose:
+                print(
+                    f"step={step}, "
+                    f"done={done.sum().item()}/{nb_particles}, "
+                    f"ESS={ess.item():.3f}/{nb_particles}"
+                )
+
+            if ess < ess_threshold * nb_particles and not done.all():
+                ancestors = torch.multinomial(
+                    normalized_weights,
+                    num_samples=nb_particles,
+                    replacement=True,
+                )
+
+                input_ids = input_ids[ancestors].clone()
+                attention_mask = attention_mask[ancestors].clone()
+                done = done[ancestors].clone()
+                year_counters = year_counters[ancestors].clone()
+                year_limits = year_limits[ancestors].clone()
+                trajectory_log_weights = trajectory_log_weights[ancestors].clone()
+
+                log_weights.zero_()
+
+                if verbose:
+                    print(f"step={step}: resampled")
+
+        final_weights = torch.softmax(log_weights, dim=0)
+
+        return (
+            input_ids,
+            attention_mask,
+            final_weights,
+            trajectory_log_weights,
+        )

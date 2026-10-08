@@ -619,6 +619,9 @@ class HFCausalL2VDataModule(L2VDataModule):
             self._decode_l2v_ids(doc.original_sequence)
             for doc in documents
         ]
+        original_sequence = [doc.original_sequence for doc in documents]
+        sequence_id = [doc.sequence_id for doc in documents]
+        padding_mask = [doc.padding_mask for doc in documents]
 
         batch = self.tokenizer(
             texts,
@@ -631,6 +634,9 @@ class HFCausalL2VDataModule(L2VDataModule):
         labels[batch["attention_mask"] == 0] = -100
 
         batch["labels"] = labels
+        batch["sequence_id"] = sequence_id
+        batch["original_sequence"] = original_sequence
+        batch["padding_mask"] = padding_mask
 
         return batch
 

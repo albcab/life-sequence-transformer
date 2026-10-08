@@ -82,7 +82,7 @@ def pension(implementation, name, suffix, offset_pension, logs=False):
         year_to_remove = ids_df.loc[ids_df.USER_ID == idx, "year_to_remove"].tolist()[0] + offset_pension
         diff, age_month = compute_results(file, year_to_remove)
         weight_file = dir_name / f"{idx}_weights.csv"
-        weights = np.loadtxt(weight_file)
+        weights = np.atleast_1d(np.loadtxt(weight_file))
         for i, (d, weight) in enumerate(zip(diff, weights)):
             ids_df.loc[ids_df.USER_ID == idx, f"diff{i}"] = d
             ids_df.loc[ids_df.USER_ID == idx, f"weight{i}"] = weight
@@ -284,7 +284,7 @@ def maternity(implementation, name, suffix, offset_mothers, logs=False, prefix="
         inactivity = compute_inactivity(file, year_to_remove)
         meta = ids_df.loc[ids_df.USER_ID == idx].to_dict(orient="list")
         weight_file = dir_name / f"{idx}_weights.csv"
-        weights = np.loadtxt(weight_file)
+        weights = np.atleast_1d(np.loadtxt(weight_file))
         weights = np.concatenate([[np.nan], np.atleast_1d(weights)])
         for values, mat, inac, weight in zip(life_incomes, maternity, inactivity, weights):
             row = {k: i[0] for k, i in meta.items()}
@@ -405,7 +405,7 @@ def unemployment(implementation, name, suffix, offset_unemployed, logs=False):
         year_to_remove = ids_df.loc[ids_df.USER_ID == idx, "year_to_remove"].tolist()[0] + offset_unemployed
         diff, age_month = compute_results(file, year_to_remove)
         weight_file = dir_name / f"{idx}_weights.csv"
-        weights = np.loadtxt(weight_file)
+        weights = np.atleast_1d(np.loadtxt(weight_file))
         for i, (d, weight) in enumerate(zip(diff, weights)):
             ids_df.loc[ids_df.USER_ID == idx, f"diff{i}"] = d
             ids_df.loc[ids_df.USER_ID == idx, f"weight{i}"] = weight

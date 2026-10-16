@@ -44,6 +44,7 @@ def main():
     parser.add_argument('--cohort', choices=['mothers', 'non_mothers', 'unemployed', 'pensioner'], default='mothers')
     parser.add_argument('--offset', type=int, default=0)
     parser.add_argument('--preflight-only', action='store_true')
+    parser.add_argument('--dfa-smc', action='store_true')
     args = parser.parse_args()
     if args.users < 0:
         parser.error('--users must be nonnegative')
@@ -98,6 +99,10 @@ def main():
                            if k.startswith('model.')}, strict=True)
     del checkpoint
     model.eval().to('cuda')
+    adapter = None
+    if args.dfa_smc:
+        from src.llm.dfa_smc import SubwordDFA, sample as dfa_smc_sample
+        adapter = SubwordDFA(tok, vocab.token2index)
     eoy, eol = (tok.convert_tokens_to_ids(x) for x in ('[EOY]', '[EOL]'))
     records, people = [], []
     def save_progress():
@@ -108,20 +113,23 @@ def main():
         temp.replace(out/'progress.json')
         print(f'Completed users: {len(people)}/{len(selected)}', flush=True)
     save_progress()
-    dest = out/'generated'/'hf_100'/'decoder_only'/cohort_name/offset
+    dest = out/'generated'/('hf_dfa_smc_100' if args.dfa_smc else 'hf_100')/'decoder_only'/cohort_name/offset
     dest.mkdir(parents=True, exist_ok=True)
     with (out/'samples.jsonl').open('w') as stream, torch.inference_mode():
         for person in selected:
             encoded = tok.encode(person['prompt'])
             remaining = model.config.n_positions-len(encoded)
-            retained, retained_indices = [], []
+            retained, retained_indices, retained_weights = [], [], []
             print(f"id={person['id']} prefix_bpe={len(encoded)} remaining={remaining} years={person['years']}", flush=True)
-            if remaining <= 0 and not args.rolling_window_mode:
+            if remaining <= 0 and not (args.rolling_window_mode or args.dfa_smc):
                 people.append(dict(id=person['id'], status='prefix_exceeds_context', prefix_bpe=len(encoded), requested_years=person['years'], attempted=0, evaluable=0))
                 save_progress()
                 continue
-            for first in range(0, 32, 8):
-                if args.rolling_window_mode:
+            for first in range(0, 32, 32 if args.dfa_smc else 8):
+                if args.dfa_smc:
+                    sampled = dfa_smc_sample(model, tok, adapter, encoded, person['prefix'],
+                        person['years'], nb_particles=32, ess_threshold=.5, verbose=True)
+                elif args.rolling_window_mode:
                     bol = tok.convert_tokens_to_ids('[BOL]')
                     background = encoded[:encoded.index(bol)+1]
                     sampled = rolling_sample(model, encoded, background, eoy, eol,
@@ -140,7 +148,7 @@ def main():
                     years, end, cut = 0, result['end'], len(new)
                     for i, token in enumerate(new):
                         years += token == eoy
-                        if token in (eol, tok.eos_token_id) or years >= person['years']:
+                        if token in (eol, tok.eos_token_id) or years >= person['years'] + int(args.dfa_smc):
                             cut = i+1
                             end = 'EOL' if token == eol else ('native_EOS' if token == tok.eos_token_id else 'year_limit')
                             break
@@ -151,7 +159,10 @@ def main():
                     eligible = end == 'year_limit' and assessment['status'] == 'accepted'
                     record = dict(id=person['id'], sample=first+sample, end=end, generated_years=years,
                                   requested_years=person['years'], window_shifts=result['shifts'],
-                                  boundary_fallbacks=result['boundary_fallbacks'], assessment=assessment, evaluator_eligible=eligible, text=text)
+                                  boundary_fallbacks=result['boundary_fallbacks'], assessment=assessment, evaluator_eligible=eligible, text=text,
+                                  weight=result.get('weight', 1/32),
+                                  trajectory_log_weight=result.get('trajectory_log_weight'),
+                                  resamplings=result.get('resamplings', 0))
                     records.append(record)
                     stream.write(json.dumps(record)+'\n'); stream.flush()
                     if eligible:
@@ -160,27 +171,31 @@ def main():
                         saved = np.zeros(max(len(ids), len(person['original'])), dtype=int)
                         saved[person['start']:len(ids)] = ids[person['start']:]
                         retained.append(saved); retained_indices.append(first+sample)
+                        retained_weights.append(result.get('weight', 1/32))
             if retained:
                 all_rows = [person['original']]+retained
                 width = max(map(len, all_rows))
                 padded = [np.pad(row, (0, width-len(row))) for row in all_rows]
                 np.savetxt(dest/f"{person['id']}_index.csv", np.vstack(padded), fmt='%d', delimiter=',')
-                np.savetxt(dest/f"{person['id']}_weights.csv", np.full(len(retained), 1/len(retained)))
+                np.savetxt(dest/f"{person['id']}_weights.csv", np.asarray(retained_weights)/sum(retained_weights))
             people.append(dict(id=person['id'], prefix_bpe=len(encoded), requested_years=person['years'],
                                attempted=32, evaluable=len(retained), retained_sample_indices=retained_indices))
             save_progress()
     os.chdir(out)
-    for implementation in ('smc_100', 'hf_100'):
+    for implementation in ('smc_100', 'hf_dfa_smc_100' if args.dfa_smc else 'hf_100'):
         if list((out/'generated'/implementation/'decoder_only'/cohort_name/offset).glob('*_index.csv')):
             evaluate_saved(args.cohort, args.offset, implementation)
     summary = dict(checkpoint=args.checkpoint, checkpoint_sha256=hashlib.sha256(Path(args.checkpoint).read_bytes()).hexdigest(),
+        grammar_cache=adapter.cache_stats() if adapter is not None else None,
         cohort=args.cohort, offset=args.offset, seed=2025, rolling_window_mode=args.rolling_window_mode,
         context_policy='preserve background through BOL; evict whole oldest years to 768 BPE; reset positions and KV cache; token-tail fallback for oversized years; 8192 new-token safety cap',
         window_shifts=sum(r['window_shifts'] for r in records), boundary_fallbacks=sum(r['boundary_fallbacks'] for r in records),
-        sampling=dict(temperature=1, top_k=0, top_p=1, dfa_mask=False),
+        sampling=dict(temperature=1, top_k=0, top_p=1, dfa_mask=args.dfa_smc,
+                      nb_particles=32 if args.dfa_smc else None, ess_threshold=.5 if args.dfa_smc else None,
+                      year_stop='count > num_years (matches LST)' if args.dfa_smc else 'count >= num_years'),
         users=people, attempted=len(records), status=dict(Counter(r['assessment']['status'] for r in records)),
         termination=dict(Counter(r['end'] for r in records)), evaluable=sum(r['evaluator_eligible'] for r in records),
-        evaluator_note='HF results conditional on grammar-valid full-horizon samples; uniform weights renormalized within retained samples. All attempts retained in samples.jsonl. SMC uses original weights.',
+        evaluator_note='HF results conditional on grammar-valid full-horizon samples; retained weights renormalized. DFA-SMC uses final SMC weights, unconstrained sampling uses uniform weights. Early EOL and truncated samples remain in samples.jsonl.',
         source_hashes={p['id']:p['source_sha256'] for p in selected})
     (out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
     print(json.dumps(summary, indent=2), flush=True)

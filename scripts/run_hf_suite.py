@@ -41,8 +41,18 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--plan', action='store_true')
     parser.add_argument('--rerun-completed', action='store_true')
+    parser.add_argument('--dfa-smc', action='store_true')
+    parser.add_argument('--experiments', nargs='+', help='Subset in execution order, e.g. mothers:0 pensioner:3')
     args = parser.parse_args()
     jobs = plan(args.repo, args.baseline)
+    if args.experiments:
+        available = {f"{job['cohort']}:{job['offset']}": job for job in jobs}
+        if len(set(args.experiments)) != len(args.experiments):
+            parser.error('Duplicate experiment selection')
+        unknown = set(args.experiments) - available.keys()
+        if unknown:
+            parser.error(f'Unknown experiments: {sorted(unknown)}')
+        jobs = [available[key] for key in args.experiments]
     if args.plan:
         print(json.dumps(jobs, indent=2))
         return
@@ -50,14 +60,16 @@ def main():
         parser.error('--output and --checkpoint are required to run')
     args.output.mkdir(parents=True, exist_ok=True)
     checkpoint_hash = hashlib.sha256(args.checkpoint.read_bytes()).hexdigest()
-    manifest = dict(checkpoint_sha256=checkpoint_hash, rolling_window_mode=True, samples_per_user=32, jobs=jobs)
+    manifest = dict(checkpoint_sha256=checkpoint_hash, rolling_window_mode=True, dfa_smc=args.dfa_smc, samples_per_user=32, jobs=jobs)
     (args.output/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     for job in jobs:
         name = f"{job['cohort']}_offset{job['offset']}_rolling_window_mode"
+        if args.dfa_smc:
+            name += '_dfa_smc'
         dest = args.output/name
         if dest.exists():
             raise FileExistsError(f'Refusing to overwrite {dest}; use a fresh suite folder')
-        if (job['cohort'], job['offset']) == ('mothers', 0) and not args.rerun_completed:
+        if (job['cohort'], job['offset']) == ('mothers', 0) and not args.rerun_completed and not args.dfa_smc:
             previous = args.repo/REUSE
             summary = json.loads((previous/'summary.json').read_text())
             assert summary['checkpoint_sha256'] == checkpoint_hash
@@ -78,6 +90,8 @@ def main():
         command = [sys.executable, '-m', 'scripts.run_hf_experiment', '--cohort', job['cohort'],
                    '--offset', str(job['offset']), '--baseline', job['baseline'],
                    '--checkpoint', str(args.checkpoint), '--output', str(dest), '--users', '0', '--rolling_window_mode']
+        if args.dfa_smc:
+            command.append('--dfa-smc')
         (dest/'command.json').write_text(json.dumps(command, indent=2)+'\n')
         print(f'START {name}: {job["users"]} users', flush=True)
         with (dest/'console.log').open('w') as log:

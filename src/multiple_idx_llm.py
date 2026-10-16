@@ -4,12 +4,11 @@ from pathlib import Path
 import hydra
 import numpy as np
 import pandas as pd
+import torch
 from hydra.utils import get_class, instantiate
 from pytorch_lightning import seed_everything
 from tqdm.auto import tqdm
 
-from src.llm.lexer import LEXER
-from src.llm.life_sequence_pda import create_pda, get_valid_token_ids
 
 
 HOME_PATH = str(Path())
@@ -33,23 +32,15 @@ def last_ckpt(dir_):
     raise FileNotFoundError(ckpt_path)
 
 
-def hf_to_l2v(generated, tokenizer, token2index, max_length):
-    texts = tokenizer.batch_decode(
-        generated,
-        skip_special_tokens=False,
-        clean_up_tokenization_spaces=False,
-    )
-
-    rows = np.zeros(
-        (len(texts), max_length),
-        dtype=int,
-    )
-
-    for row, text in enumerate(texts):
-        tokens = text.strip().split()
-        indices = [token2index[token] for token in tokens]
-        rows[row, :len(indices)] = indices
-
+def hf_to_l2v(generated, tokenizer, token2index, max_length, attention_mask=None):
+    texts = [tokenizer.decode(row if attention_mask is None else row[attention_mask[i].bool()],
+                             skip_special_tokens=False, clean_up_tokenization_spaces=False)
+             for i, row in enumerate(generated)]
+    indices = [[token2index[word] for word in text.split()] for text in texts]
+    width = max(max_length, max(map(len, indices)))
+    rows = np.zeros((len(indices), width), dtype=int)
+    for i, values in enumerate(indices):
+        rows[i, :len(values)] = values
     return rows
 
 
@@ -83,7 +74,7 @@ def main(cfg):
     if cfg.get("model_path"):
         model = ModelClass.load_from_checkpoint(
             cfg.model_path,
-            strict=False,
+            strict=True,
             hparams=cfg.model.hparams,
             tokenizer=tokenizer,
         )
@@ -101,55 +92,6 @@ def main(cfg):
 
     model.to(cfg.trainer.accelerator)
     model.eval()
-
-    # ------------------------------------------------------------
-    # PDA / lexer.
-    # ------------------------------------------------------------
-
-    max_stack_height = cfg.generate.sampler.max_stack_height
-    max_steps = cfg.generate.sampler.max_steps
-
-    pda = create_pda(tokenizer.eos_token)
-
-    valid_token_ids = get_valid_token_ids(
-        pda,
-        tokenizer,
-    )
-
-    print(
-        f"Valid tokenizer tokens: "
-        f"{len(valid_token_ids)}/{len(tokenizer)}"
-    )
-
-    model_name_short = (
-        cfg.model.hparams.model_name
-        .split("/")[-1]
-        .replace("-", "_")
-        .replace(".", "_")
-    )
-
-    precomputation_path = (
-        f"src/llm/"
-        f"{model_name_short}_life_sequence_"
-        f"precomputation_max_height_{max_stack_height}.json"
-    )
-
-    log.info(
-        "Loading PDA precomputation from %s",
-        precomputation_path,
-    )
-
-    pda.precompute_configurations(
-        tokenizer=tokenizer,
-        max_height=max_stack_height,
-        load_path=precomputation_path,
-        eos=tokenizer.eos_token,
-    )
-
-    lexer = LEXER(
-        pda,
-        tokenizer,
-    )
 
     # ------------------------------------------------------------
     # Output.
@@ -170,10 +112,6 @@ def main(cfg):
 
     token2index = data.vocabulary.token2index
     index2token = data.vocabulary.index2token
-
-    eoy_idx = tokenizer.convert_tokens_to_ids(
-        "[EOY]"
-    )
 
     # ------------------------------------------------------------
     # Users.
@@ -201,7 +139,7 @@ def main(cfg):
             "Generation input must contain unique USER_ID values"
         )
 
-    samples_per_id = int(cfg.datamodule.batch_size)
+    samples_per_id = int(cfg.generate.sampler.nb_particles)
 
     if samples_per_id < 1:
         raise ValueError(
@@ -267,44 +205,18 @@ def main(cfg):
         for batch in dataloader:
 
             if original_sequence is None:
-                original_sequence = batch["original_sequence"][0]
-                known = batch["padding_mask"][0]
+                original_sequence = np.asarray(batch["original_sequence"][0])
+                known = np.asarray(batch["padding_mask"][0], dtype=bool)
 
             # --------------------------------------------
             # Extract the single LLM prompt.
             # --------------------------------------------
 
-            batch = model.transfer_batch_to_device(
-                batch,
-                model.device,
-                dataloader_idx=0,
-            )
-
-            prompt_input_ids = batch[
-                "input_ids"
-            ][0:1]
-
-            prompt_attention_mask = batch[
-                "attention_mask"
-            ][0:1]
-
-            prompt_length = int(
-                prompt_attention_mask.sum().item()
-            )
-
-            prompt_input_ids = (
-                prompt_input_ids[
-                    :,
-                    :prompt_length,
-                ]
-            )
-
-            prompt_attention_mask = (
-                prompt_attention_mask[
-                    :,
-                    :prompt_length,
-                ]
-            )
+            prefix = original_sequence[known]
+            prompt = " ".join(index2token[int(token)] for token in prefix)
+            encoded = tokenizer.encode(prompt, add_special_tokens=False)
+            prompt_input_ids = torch.tensor([encoded], device=model.device)
+            prompt_attention_mask = torch.ones_like(prompt_input_ids)
 
             # --------------------------------------------
             # SMC.
@@ -312,21 +224,18 @@ def main(cfg):
 
             (
                 generated_hf,
-                _,
+                generated_attention,
                 final_weights,
                 trajectory_log_weights,
             ) = model.smc_sample(
                 input_ids=prompt_input_ids,
                 attention_mask=prompt_attention_mask,
-                automata=pda,
                 tokenizer=tokenizer,
-                lexer=lexer,
                 num_years=(
                     cfg.generate.sampler.num_years
-                    or trunc_year
+                    if cfg.generate.sampler.num_years is not None else trunc_year
                 ),
-                eoy_idx=eoy_idx,
-                valid_token_ids=valid_token_ids,
+                token2index=token2index,
                 nb_particles=samples_per_id,
                 max_new_tokens=(
                     cfg.generate.sampler.max_new_tokens
@@ -334,8 +243,6 @@ def main(cfg):
                 ess_threshold=(
                     cfg.generate.sampler.ess_threshold
                 ),
-                max_stack_height=max_stack_height,
-                max_steps=max_steps,
                 verbose=cfg.generate.sampler.verbose,
             )
 
@@ -355,9 +262,10 @@ def main(cfg):
                 tokenizer,
                 token2index,
                 cfg.datamodule.task.max_length,
+                attention_mask=generated_attention.cpu(),
             )
 
-            rows[:, known] = 0
+            rows[:, np.flatnonzero(known)] = 0
 
             cum_rows.append(rows)
 
@@ -388,7 +296,7 @@ def main(cfg):
 
         data_rows = np.vstack(
             [
-                original_sequence,
+                np.pad(original_sequence, (0, generated_rows.shape[1]-len(original_sequence))),
                 generated_rows,
             ]
         )

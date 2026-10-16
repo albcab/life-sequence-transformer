@@ -55,3 +55,6 @@ results_*/
 experiment_results/
 exp_results/
 wandb/
+
+# Persistent DFA-to-subword transition tables
+/.cache/hf_dfa_smc/

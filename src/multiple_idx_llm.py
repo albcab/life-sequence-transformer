@@ -209,14 +209,21 @@ def main(cfg):
                 known = np.asarray(batch["padding_mask"][0], dtype=bool)
 
             # --------------------------------------------
-            # Extract the single LLM prompt.
+            # Extract the HF-tokenized prompt and its
+            # aligned temporal information.
             # --------------------------------------------
 
-            prefix = original_sequence[known]
-            prompt = " ".join(index2token[int(token)] for token in prefix)
-            encoded = tokenizer.encode(prompt, add_special_tokens=False)
-            prompt_input_ids = torch.tensor([encoded], device=model.device)
-            prompt_attention_mask = torch.ones_like(prompt_input_ids)
+            prompt_input_ids = batch["input_ids"].to(model.device)
+            prompt_attention_mask = batch["attention_mask"].to(model.device)
+            prompt_years = batch["years"].to(model.device)
+            prompt_ages = batch["ages"].to(model.device)
+            prompt_temporal_mask = batch["temporal_mask"].to(model.device)
+
+            # --------------------------------------------
+            # Original life2vec prefix for DFA state.
+            # --------------------------------------------
+
+            domain_prefix = original_sequence[known].astype(int).tolist()
 
             # --------------------------------------------
             # SMC.
@@ -230,6 +237,9 @@ def main(cfg):
             ) = model.smc_sample(
                 input_ids=prompt_input_ids,
                 attention_mask=prompt_attention_mask,
+                years=prompt_years,
+                ages=prompt_ages,
+                temporal_mask=prompt_temporal_mask,
                 tokenizer=tokenizer,
                 num_years=(
                     cfg.generate.sampler.num_years
@@ -244,6 +254,7 @@ def main(cfg):
                     cfg.generate.sampler.ess_threshold
                 ),
                 verbose=cfg.generate.sampler.verbose,
+                domain_prefix=domain_prefix,
             )
 
             # --------------------------------------------

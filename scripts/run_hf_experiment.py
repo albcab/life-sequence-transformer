@@ -163,6 +163,12 @@ def main():
                                   weight=result.get('weight', 1/32),
                                   trajectory_log_weight=result.get('trajectory_log_weight'),
                                   resamplings=result.get('resamplings', 0))
+                    if args.dfa_smc:
+                        lp = result['model_token_log_probs'][:cut]
+                        lq = result['proposal_token_log_probs'][:cut]
+                        record.update(model_token_log_probs=lp, proposal_token_log_probs=lq,
+                                      model_log_probability=sum(lp), proposal_log_probability=sum(lq),
+                                      model_nll_per_token=-sum(lp)/len(lp) if lp else None)
                     records.append(record)
                     stream.write(json.dumps(record)+'\n'); stream.flush()
                     if eligible:

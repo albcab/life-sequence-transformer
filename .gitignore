@@ -19,6 +19,7 @@ data
 visualization
 analysis
 weights
+papers
 checkpoints
 generated
 life_sequence_dfa

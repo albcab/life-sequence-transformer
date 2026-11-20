@@ -74,6 +74,13 @@ class WeightTests(unittest.TestCase):
             result=sample(FakeModel(),Tokenizer(),Longer(),[1],[1],10,nb_particles=2,ess_threshold=1)
         self.assertEqual([r['tokens'] for r in result],[[2],[3,3,2]])
         self.assertEqual(result[0]['resamplings'],1)
+        for row in result:
+            self.assertEqual(len(row['tokens']), len(row['model_token_log_probs']))
+            self.assertEqual(len(row['tokens']), len(row['proposal_token_log_probs']))
+            self.assertAlmostEqual(sum(row['model_token_log_probs']) -
+                                   sum(row['proposal_token_log_probs']),
+                                   row['trajectory_log_weight'], places=6)
+
         self.assertAlmostEqual(result[0]['weight'],.625,places=6)
         self.assertAlmostEqual(result[1]['weight'],.375,places=6)
         self.assertAlmostEqual(float(torch.tensor(result[1]['trajectory_log_weight']).exp()),.8*.2*.6,places=6)

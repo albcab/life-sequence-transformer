@@ -48,7 +48,7 @@ def _strictly_increasing_groups(tokens, group_masks):
 
 
 def _one_value_set(set):
-    return lambda tokens: all(token in set for token in tokens) #short-circuits
+    return lambda tokens: len(tokens) == 1 and tokens[0] in set
 
 
 TOKEN_INDICES_DICT = {
@@ -738,12 +738,11 @@ for name, list_of_lambdas in increasing_sets.items():
 # ------------------------------------------------------------
 
 def _satisfied_one_value_set(tokens: List[int], valid_set: frozenset) -> bool:
-    return all(tok in valid_set for tok in tokens)
+    return len(tokens) == 1 and tokens[0] in valid_set
 
 def _can_extend_one_value_set(tokens: List[int], valid_set: frozenset) -> bool:
-    # Can we add at least one more token and still satisfied?
-    # Only possible if valid_set is non-empty and (if empty, no tokens anyway)
-    return len(valid_set) > 0
+    # A satisfied singleton transition cannot consume another token.
+    return False
 
 def _satisfied_fixed_length(tokens: List[int], meta: dict) -> bool:
     if len(tokens) != meta['length']:
@@ -864,26 +863,10 @@ def evaluate_matcher(matcher: Callable, tokens: List[int]) -> Tuple[bool, bool, 
         raise ValueError("Unknown matcher. Only matchers from TOKEN_INDICES_DICT are supported.")
     
     if meta['type'] == 'one_value_set':
-        valid_set = meta['set']
-        satisfied = _satisfied_one_value_set(tokens, valid_set)
-        if satisfied:
-            extendable = _can_extend_one_value_set(tokens, valid_set)
-            fixable = False
-        else:
-            extendable = False
-            # Can we extend to a valid sequence? That requires that all current tokens are in the set
-            # and we can add more tokens (if set not empty) OR we can add tokens to fix?
-            # Actually fixable means we can add tokens (possibly at the end) to become satisfieding.
-            # For one_value_set, if any token is not in set, no extension can fix it because adding more tokens won't remove the invalid one.
-            # So fixable only if all tokens are in set (but sequence is empty or non-empty) AND we can add more tokens? Wait, satisfied false means at least one token is not in set.
-            # If a token is not in set, the sequence can never become satisfieding because the invalid token remains.
-            # However, if the sequence is empty, it does not satisfied (since empty? Actually empty sequence: all([]) is True, so satisfied would be True. So empty satisfies one_value_set.)
-            # So for non-empty with a bad token -> cannot become satisfieding.
-            # For empty, satisfied is True (already handled).
-            # Thus fixable is always False for one_value_set.
-            fixable = False
-        return satisfied, extendable, fixable
-    
+        # MONTH/TIPO/DUR/EOY/EOL transitions consume exactly one domain token.
+        satisfied = len(tokens) == 1 and tokens[0] in meta['set']
+        return satisfied, False, len(tokens) == 0 and bool(meta['set'])
+
     elif meta['type'] == 'fixed_length':
         satisfied = _satisfied_fixed_length(tokens, meta)
         if satisfied:
@@ -957,12 +940,7 @@ def evaluate_matcher_batch(matcher: Callable, prefix: Tuple[int, ...], candidate
 
     if meta["type"] == "one_value_set":
         valid_values = np.asarray(list(meta["set"]), dtype=np.int64)
-        prefix_valid = np.isin(prefix, valid_values).all()
-        candidate_valid = np.isin(candidates, valid_values)
-
-        satisfied = prefix_valid & candidate_valid
-        extendable = satisfied & (len(valid_values) > 0)
-
+        satisfied = (new_length == 1) & np.isin(candidates, valid_values)
         return satisfied, extendable, fixable
 
     if meta["type"] == "fixed_length":

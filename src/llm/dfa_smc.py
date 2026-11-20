@@ -146,13 +146,21 @@ def sample(model, tokenizer, adapter, encoded, domain_prefix, num_years,
            verbose=False):
     if nb_particles < 1 or not 0 < ess_threshold <= 1 or num_years < 0:
         raise ValueError('Invalid particle count, ESS threshold, or year limit')
+    if max_new_tokens < 1:
+        raise ValueError('max_new_tokens must be positive')
     initial = adapter.initial(domain_prefix)
+    conditional = getattr(adapter, 'conditional', False)
+    allow_failure = getattr(adapter, 'allow_particle_failure', False)
+    if conditional and not adapter.choices_with_budget(initial, max_new_tokens):
+        raise ValueError('No jointly accepting continuation within the BPE token budget')
     device = next(model.parameters()).device
     bol = tokenizer.convert_tokens_to_ids('[BOL]')
     background = encoded[:encoded.index(bol)+1]
     limit = model.config.n_positions
     contexts = [list(encoded) for _ in range(nb_particles)]
     generated = [[] for _ in contexts]
+    model_scores = [[] for _ in contexts]
+    proposal_scores = [[] for _ in contexts]
     states = [initial for _ in contexts]
     counts = [0] * nb_particles
     ends = ['EOL' if domain_prefix[-1] == adapter.words['[EOL]'] else None for _ in contexts]
@@ -190,23 +198,36 @@ def sample(model, tokenizer, adapter, encoded, domain_prefix, num_years,
         for i in range(nb_particles):
             if ends[i] is not None:
                 continue
-            valid = adapter.choices(states[i])
+            valid = (adapter.choices_with_budget(states[i], max_new_tokens - step)
+                     if conditional else adapter.choices(states[i]))
+            if not valid and allow_failure:
+                ends[i] = 'dead_end'
+                weights[i] = -torch.inf
+                continue
             if not valid:
                 raise RuntimeError(f'No DFA-valid subword for particle {i}, step {step}')
             ids = torch.tensor(list(valid),device=device)
             mass = torch.logsumexp(log_probs[i,ids],dim=0).double()
             chosen = torch.multinomial((log_probs[i,ids]-mass).exp(),1)
             token = int(ids[chosen].item())
+            model_scores[i].append(float(log_probs[i, token]))
+            proposal_scores[i].append(float(log_probs[i, token].double() - mass))
             weights[i] += mass; trajectory[i] += mass
             next_tokens[i] = token
             states[i] = valid[token]
             contexts[i].append(token); generated[i].append(token)
             counts[i] += int(token == adapter.eoy)
-            if token == adapter.eol:
+            if conditional and adapter.accepting(states[i]):
+                ends[i] = 'EOL' if token == adapter.eol else 'property_horizon'
+            elif token == adapter.eol:
+                if conditional and not adapter.accepting(states[i]):
+                    raise RuntimeError('Conditional sampler reached a nonaccepting EOL')
                 ends[i] = 'EOL'
             # Match the existing custom-model sampler's > comparison, not >=.
-            elif counts[i] > num_years:
+            elif not conditional and counts[i] > num_years:
                 ends[i] = 'year_limit'
+        if not torch.isfinite(weights).any():
+            break
         normalized = weights.softmax(0)
         ess = 1/normalized.square().sum()
         if ess < ess_threshold*nb_particles and not all(end is not None for end in ends):
@@ -214,6 +235,8 @@ def sample(model, tokenizer, adapter, encoded, domain_prefix, num_years,
             indices = ancestors.tolist()
             contexts = [contexts[j].copy() for j in indices]
             generated = [generated[j].copy() for j in indices]
+            model_scores = [model_scores[j].copy() for j in indices]
+            proposal_scores = [proposal_scores[j].copy() for j in indices]
             states = [states[j] for j in indices]
             counts = [counts[j] for j in indices]
             ends = [ends[j] for j in indices]
@@ -226,7 +249,17 @@ def sample(model, tokenizer, adapter, encoded, domain_prefix, num_years,
             weights.zero_(); resamplings += 1
         if verbose and step % 100 == 0:
             print(f'SMC step={step}, finished={sum(e is not None for e in ends)}/{nb_particles}, ESS={float(ess):.2f}, resamplings={resamplings}',flush=True)
-    final = weights.softmax(0).tolist()
+    accepted = [not conditional or adapter.accepting(state) for state in states]
+    if allow_failure:
+        for i, ok in enumerate(accepted):
+            if not ok:
+                weights[i] = -torch.inf
+    if conditional and not allow_failure and not all(accepted):
+        raise RuntimeError('Conditional sampler failed to reach joint acceptance')
+    extinct = not bool(torch.isfinite(weights).any())
+    final = [0.] * nb_particles if extinct else weights.softmax(0).tolist()
     return [dict(tokens=tokens,end=end or 'token_budget',shifts=shift,boundary_fallbacks=fallback,
-                 weight=weight,trajectory_log_weight=float(logw),resamplings=resamplings)
-            for tokens,end,shift,fallback,weight,logw in zip(generated,ends,shifts,fallbacks,final,trajectory.tolist())]
+                 weight=weight,trajectory_log_weight=float(logw),resamplings=resamplings,
+                 model_token_log_probs=lp, proposal_token_log_probs=lq, accepted=ok, population_extinct=extinct)
+            for tokens,end,shift,fallback,weight,logw,lp,lq,ok in zip(
+                generated,ends,shifts,fallbacks,final,trajectory.tolist(),model_scores,proposal_scores,accepted)]

@@ -10,6 +10,8 @@ from transformers import (
     get_cosine_schedule_with_warmup,
 )
 
+from src.models.embeddings import SmartPositionalEmbedding, PositionalEmbedding, ReZero
+
 
 log = logging.getLogger(__name__)
 
@@ -264,3 +266,159 @@ class HFCausalLM(pl.LightningModule):
         return (sequences, masks,
                 torch.tensor([r['weight'] for r in rows], dtype=torch.float64, device=input_ids.device),
                 torch.tensor([r['trajectory_log_weight'] for r in rows], dtype=torch.float64, device=input_ids.device))
+
+
+class HFExoCausalLM(HFCausalLM):
+
+    def __init__(self, hparams, tokenizer):
+        super().__init__(hparams, tokenizer)
+
+        hidden_size = self.model.config.hidden_size
+
+        if self.hparams.smart_positions:
+            self.year = SmartPositionalEmbedding(1, hidden_size, torch.sin, year=True)
+            self.age = SmartPositionalEmbedding(1, hidden_size, torch.cos, year=False)
+        else:
+            self.year = PositionalEmbedding(1, hidden_size, torch.sin)
+            self.age = PositionalEmbedding(1, hidden_size, torch.cos)
+
+        self.res_year = ReZero(hidden_size, simple=True, fill=0)
+        self.res_age = ReZero(hidden_size, simple=True, fill=0)
+
+
+    def embed_tokens(self, input_ids, years, ages, temporal_mask):
+        tokens = self.model.get_input_embeddings()(input_ids.long())
+
+        year = self.year(years.float().unsqueeze(-1))
+        age = self.age(ages.float().unsqueeze(-1))
+
+        mask = temporal_mask.unsqueeze(-1).to(tokens.dtype)
+
+        tokens = self.res_year(tokens, year * mask)
+        tokens = self.res_age(tokens, age * mask)
+
+        return tokens
+
+
+    def forward(self, batch):
+        tokens = self.embed_tokens(
+            batch["input_ids"],
+            batch["years"],
+            batch["ages"],
+            batch["temporal_mask"],
+        )
+
+        return self.model(
+            inputs_embeds=tokens,
+            attention_mask=batch["attention_mask"].long(),
+            labels=batch["labels"].long(),
+        )
+
+    def configure_optimizers(self):
+        decay_parameters = []
+        no_decay_parameters = []
+
+        for name, parameter in self.named_parameters():
+            if not parameter.requires_grad:
+                continue
+
+            if parameter.ndim >= 2:
+                decay_parameters.append(parameter)
+            else:
+                no_decay_parameters.append(parameter)
+
+        optimizer = torch.optim.AdamW(
+            [
+                {
+                    "params": decay_parameters,
+                    "weight_decay": self.hparams.weight_decay,
+                },
+                {
+                    "params": no_decay_parameters,
+                    "weight_decay": 0.0,
+                },
+            ],
+            lr=self.hparams.learning_rate,
+            betas=(self.hparams.beta1, self.hparams.beta2),
+            eps=self.hparams.epsilon,
+        )
+
+        total_steps = self.trainer.estimated_stepping_batches
+        warmup_steps = int(total_steps * self.hparams.warmup_ratio)
+
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps,
+        )
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+                "frequency": 1,
+                "name": "learning_rate",
+            },
+        }
+
+    @torch.inference_mode()
+    def smc_sample(self, input_ids, attention_mask, years, ages, 
+                   temporal_mask, tokenizer, num_years, 
+                   token2index, nb_particles=32, max_new_tokens=8192, 
+                   ess_threshold=0.5, verbose=False, domain_prefix=None):
+        from src.llm.dfa_smc_exo import sample
+        from src.llm.dfa_smc import SubwordDFA
+
+        if input_ids.shape[0] != 1:
+            raise ValueError("smc_sample expects one person; particles never mix people")
+
+        valid = attention_mask[0].bool()
+
+        encoded = input_ids[0, valid].tolist()
+        prefix_years = years[0, valid].tolist()
+        prefix_ages = ages[0, valid].tolist()
+        prefix_temporal_mask = temporal_mask[0, valid].tolist()
+
+        if domain_prefix is not None:
+            prefix = domain_prefix
+        else:
+            text = tokenizer.decode(encoded,bskip_special_tokens=False, clean_up_tokenization_spaces=False)
+            prefix = [int(token2index[word]) for word in text.split()]
+
+        if not hasattr(self, "_subword_dfa"):
+            self._subword_dfa = SubwordDFA(tokenizer, token2index)
+
+        rows = sample(self, tokenizer, self._subword_dfa, encoded, prefix, num_years, 
+                      prefix_years, prefix_ages, prefix_temporal_mask, 
+                      nb_particles=nb_particles, max_new_tokens=max_new_tokens, 
+                      ess_threshold=ess_threshold, verbose=verbose)
+
+        self.last_smc_metadata = rows
+
+        if any(row["end"] == "token_budget" for row in rows):
+            raise RuntimeError("SMC safety budget exhausted; refusing to save incomplete particles")
+
+        width = len(encoded) + max(len(row["tokens"]) for row in rows)
+
+        sequences = torch.full(
+            (nb_particles, width),
+            tokenizer.pad_token_id,
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+        )
+
+        masks = torch.zeros_like(sequences)
+
+        for i, row in enumerate(rows):
+            tokens = encoded + row["tokens"]
+
+            sequences[i, :len(tokens)] = torch.tensor(tokens, device=input_ids.device)
+            masks[i, :len(tokens)] = 1
+
+        return (
+            sequences,
+            masks,
+            torch.tensor([r["weight"] for r in rows], dtype=torch.float64, device=input_ids.device),
+            torch.tensor([r["trajectory_log_weight"] for r in rows], dtype=torch.float64, device=input_ids.device),
+        )

@@ -1,0 +1,209 @@
+
+"""Paired HF experiment; saved SMC prefixes are the source of truth."""
+import argparse
+from collections import Counter
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+
+import hydra
+from hydra.utils import get_class, instantiate
+import numpy as np
+import pandas as pd
+import torch
+from scripts.check_hf_grammar import check_text
+from scripts.rolling_window import rolling_sample
+from src.models.dfa import LIFESEQUENCEDFA
+import counter
+
+def evaluate_saved(cohort, offset, implementation):
+    evaluate = {'mothers': counter.maternity, 'non_mothers': counter.maternity,
+                'unemployed': counter.unemployment, 'pensioner': counter.pension}[cohort]
+    extra = {'prefix': 'non_'} if cohort == 'non_mothers' else {}
+    evaluate(implementation, 'decoder_only', 'test_ids_clean', offset, logs=False, **extra)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--output', required=True)
+    parser.add_argument('--baseline', required=True)
+    parser.add_argument('--checkpoint', required=True)
+    parser.add_argument('--users', type=int, default=8, help='0 selects the full cohort')
+    parser.add_argument('--rolling_window_mode', action='store_true')
+    parser.add_argument('--cohort', choices=['mothers', 'non_mothers', 'unemployed', 'pensioner'], default='mothers')
+    parser.add_argument('--offset', type=int, default=0)
+    parser.add_argument('--preflight-only', action='store_true')
+    parser.add_argument('--dfa-smc', action='store_true')
+    args = parser.parse_args()
+    if args.users < 0:
+        parser.error('--users must be nonnegative')
+    out = Path(args.output).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    if (out/'samples.jsonl').exists():
+        raise FileExistsError('Existing samples: use a fresh output folder; refusing to overwrite')
+    cohort_name = f'{args.cohort}_test_ids_clean'
+    offset = str(args.offset)
+    torch.manual_seed(2025)
+    np.random.seed(2025)
+    with hydra.initialize_config_dir(config_dir='/usr/src/conf', version_base=None):
+        cfg = hydra.compose(config_name='config', overrides=['experiment=hf_llm_exo'])
+    tok = instantiate(cfg.tokenizer)
+    data = instantiate(cfg.datamodule, tokenizer=tok, _convert_='all')
+    vocab = data.vocabulary
+    dfa = LIFESEQUENCEDFA()
+    cohort = pd.read_csv(f'/usr/src/{cohort_name}.csv')
+    if args.users:
+        cohort = cohort.head(args.users)
+    if cohort.USER_ID.duplicated().any():
+        raise ValueError('Duplicate cohort IDs')
+    baseline = Path(args.baseline)
+    cohort.to_csv(out/f'{cohort_name}.csv', index=False)
+    shutil.copy('/usr/src/income_100_cache.json', out/'income_100_cache.json')
+    selected = []
+    for person in cohort.itertuples(index=False):
+        uid = int(person.USER_ID)
+        path = baseline/f'{uid}_index.csv'
+        arr = np.loadtxt(path, delimiter=',', dtype=int)
+        starts = [int(np.flatnonzero(row)[0]) for row in arr[1:]]
+        assert len(arr) == 33 and len(set(starts)) == 1
+        start = starts[0]
+        prefix = arr[0, :start].tolist()
+        assert all(prefix) and prefix[-1] in (1, 3)
+        prompt = ' '.join(vocab.index2token[x] for x in prefix)
+        selected.append(dict(id=uid, years=int(person.year_to_remove)+args.offset, start=start,
+                             prompt=prompt, prefix=prefix, original=arr[0],
+                             source_sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+        # Re-evaluate exactly the same SMC subset using unchanged counter.py.
+        dest = out/'generated'/'smc_100'/'decoder_only'/cohort_name/offset
+        dest.mkdir(parents=True, exist_ok=True)
+        for kind in ('index', 'weights'):
+            shutil.copy(baseline/f'{uid}_{kind}.csv', dest/f'{uid}_{kind}.csv')
+    if args.preflight_only:
+        print(f'Preflight passed: {len(selected)} users, {args.cohort}, offset {args.offset}', flush=True)
+        return
+
+    ModelClass = get_class(cfg.model._target_)
+    model = ModelClass.load_from_checkpoint(
+        args.checkpoint,
+        strict=True,
+        hparams=cfg.model.hparams,
+        tokenizer=tok,
+    )
+    model.eval().to('cuda')
+
+    adapter = None
+    if args.dfa_smc:
+        from src.llm.dfa_smc import SubwordDFA, sample as dfa_smc_sample
+        adapter = SubwordDFA(tok, vocab.token2index)
+    eoy, eol = (tok.convert_tokens_to_ids(x) for x in ('[EOY]', '[EOL]'))
+    records, people = [], []
+    def save_progress():
+        temp = out/'progress.tmp'
+        temp.write_text(json.dumps(dict(total_users=len(selected), completed_users=len(people),
+            attempted=sum(p['attempted'] for p in people), evaluable=sum(p['evaluable'] for p in people),
+            users=people), indent=2)+'\n')
+        temp.replace(out/'progress.json')
+        print(f'Completed users: {len(people)}/{len(selected)}', flush=True)
+    save_progress()
+    dest = out/'generated'/('hf_dfa_smc_100' if args.dfa_smc else 'hf_100')/'decoder_only'/cohort_name/offset
+    dest.mkdir(parents=True, exist_ok=True)
+    with (out/'samples.jsonl').open('w') as stream, torch.inference_mode():
+        for person in selected:
+            dataloader = data.single_idx_dataloader(
+                idx=person['id'],
+                trunc_years=person['years'],
+                reps=1,
+                split='test',
+            )
+            batch = next(iter(dataloader))
+            original = np.asarray(batch['original_sequence'][0])
+            known = np.asarray(batch['padding_mask'][0], dtype=bool)
+            prefix = original[original != 0].astype(int).tolist()
+            assert prefix == person['prefix'], f"Saved prefix mismatch for id={person['id']}"
+
+            valid = batch['attention_mask'][0].bool()
+            encoded = batch['input_ids'][0, valid].tolist()
+            prefix_years = batch['years'][0, valid].tolist()
+            prefix_ages = batch['ages'][0, valid].tolist()
+            prefix_temporal_mask = batch['temporal_mask'][0, valid].tolist()
+
+            remaining = model.model.config.n_positions-len(encoded)
+            retained, retained_indices, retained_weights = [], [], []
+            print(f"id={person['id']} prefix_bpe={len(encoded)} remaining={remaining} years={person['years']}", flush=True)
+            if remaining <= 0 and not (args.rolling_window_mode or args.dfa_smc):
+                people.append(dict(id=person['id'], status='prefix_exceeds_context', prefix_bpe=len(encoded), requested_years=person['years'], attempted=0, evaluable=0))
+                save_progress()
+                continue
+            for first in range(0, 32, 32 if args.dfa_smc else 8):
+                if args.dfa_smc:
+                    sampled = dfa_smc_sample(model, tok, adapter, encoded, person['prefix'],
+                        person['years'], prefix_years, prefix_ages, prefix_temporal_mask,
+                        nb_particles=32, ess_threshold=.5, verbose=True)
+                else:
+                    bol = tok.convert_tokens_to_ids('[BOL]')
+                    background = encoded[:encoded.index(bol)+1]
+                    sampled = rolling_sample(model, encoded, background, eoy, eol,
+                        tok.eos_token_id, tok.pad_token_id, person['years'],
+                        prefix_years, prefix_ages, prefix_temporal_mask)
+                for sample, result in enumerate(sampled):
+                    new = result['tokens']
+                    years, end, cut = 0, result['end'], len(new)
+                    for i, token in enumerate(new):
+                        years += token == eoy
+                        if token in (eol, tok.eos_token_id) or years >= person['years'] + int(args.dfa_smc):
+                            cut = i+1
+                            end = 'EOL' if token == eol else ('native_EOS' if token == tok.eos_token_id else 'year_limit')
+                            break
+                    new = new[:cut]
+                    text = person['prompt'] + tok.decode(new, skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                    assessment = check_text(text, vocab.token2index, dfa, capped=end in ('context_limit', 'token_budget'))
+                    # The legacy evaluator right-aligns years, so only full-horizon valid rows enter it.
+                    eligible = end == 'year_limit' and assessment['status'] == 'accepted'
+                    record = dict(id=person['id'], sample=first+sample, end=end, generated_years=years,
+                                  requested_years=person['years'], window_shifts=result['shifts'],
+                                  boundary_fallbacks=result['boundary_fallbacks'], assessment=assessment, evaluator_eligible=eligible, text=text,
+                                  weight=result.get('weight', 1/32),
+                                  trajectory_log_weight=result.get('trajectory_log_weight'),
+                                  resamplings=result.get('resamplings', 0))
+                    records.append(record)
+                    stream.write(json.dumps(record)+'\n'); stream.flush()
+                    if eligible:
+                        ids = [vocab.token2index[x] for x in text.split()]
+                        assert ids[:person['start']] == person['prefix']
+                        saved = np.zeros(max(len(ids), len(person['original'])), dtype=int)
+                        saved[person['start']:len(ids)] = ids[person['start']:]
+                        retained.append(saved); retained_indices.append(first+sample)
+                        retained_weights.append(result.get('weight', 1/32))
+            if retained:
+                all_rows = [person['original']]+retained
+                width = max(map(len, all_rows))
+                padded = [np.pad(row, (0, width-len(row))) for row in all_rows]
+                np.savetxt(dest/f"{person['id']}_index.csv", np.vstack(padded), fmt='%d', delimiter=',')
+                np.savetxt(dest/f"{person['id']}_weights.csv", np.asarray(retained_weights)/sum(retained_weights))
+            people.append(dict(id=person['id'], prefix_bpe=len(encoded), requested_years=person['years'],
+                               attempted=32, evaluable=len(retained), retained_sample_indices=retained_indices))
+            save_progress()
+    os.chdir(out)
+    for implementation in ('smc_100', 'hf_dfa_smc_100' if args.dfa_smc else 'hf_100'):
+        if list((out/'generated'/implementation/'decoder_only'/cohort_name/offset).glob('*_index.csv')):
+            evaluate_saved(args.cohort, args.offset, implementation)
+    summary = dict(checkpoint=args.checkpoint, checkpoint_sha256=hashlib.sha256(Path(args.checkpoint).read_bytes()).hexdigest(),
+        grammar_cache=adapter.cache_stats() if adapter is not None else None,
+        cohort=args.cohort, offset=args.offset, seed=2025, rolling_window_mode=args.rolling_window_mode,
+        context_policy='preserve background through BOL; evict whole oldest years to 768 BPE; reset positions and KV cache; token-tail fallback for oversized years; 8192 new-token safety cap',
+        window_shifts=sum(r['window_shifts'] for r in records), boundary_fallbacks=sum(r['boundary_fallbacks'] for r in records),
+        sampling=dict(temperature=1, top_k=0, top_p=1, dfa_mask=args.dfa_smc,
+                      nb_particles=32 if args.dfa_smc else None, ess_threshold=.5 if args.dfa_smc else None,
+                      year_stop='count > num_years (matches LST)' if args.dfa_smc else 'count >= num_years'),
+        users=people, attempted=len(records), status=dict(Counter(r['assessment']['status'] for r in records)),
+        termination=dict(Counter(r['end'] for r in records)), evaluable=sum(r['evaluator_eligible'] for r in records),
+        evaluator_note='HF results conditional on grammar-valid full-horizon samples; retained weights renormalized. DFA-SMC uses final SMC weights, unconstrained sampling uses uniform weights. Early EOL and truncated samples remain in samples.jsonl.',
+        source_hashes={p['id']:p['source_sha256'] for p in selected})
+    (out/'summary.json').write_text(json.dumps(summary, indent=2)+'\n')
+    print(json.dumps(summary, indent=2), flush=True)
+
+
+if __name__ == '__main__':
+    main()

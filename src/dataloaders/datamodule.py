@@ -660,3 +660,71 @@ class HFCausalL2VDataModule(L2VDataModule):
                 "fork" if torch.backends.mps.is_available() else None
             ),
         )
+
+@dataclass
+class HFExoL2VDataModule(HFCausalL2VDataModule):
+
+    def collate_hf(self, documents):
+        index2token = self.vocabulary.index2token
+
+        tokens = [
+            [index2token[int(idx)] for idx in doc.original_sequence if int(idx) != 0]
+            for doc in documents
+        ]
+
+        for i, doc in enumerate(documents):
+            length = int(doc.padding_mask.sum()) + 1
+
+            if len(tokens[i]) != length:
+                print(f"WARNING: Sequence truncated before collating for person {doc.sequence_id}. Assuming generation mode.")
+                tokens[i] = tokens[i][:length]
+
+        texts = [" ".join(words) for words in tokens]
+
+        batch = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_offsets_mapping=True,
+            return_tensors="pt",
+        )
+
+        years = torch.zeros_like(batch["input_ids"])
+        ages = torch.zeros_like(batch["input_ids"])
+        temporal_mask = torch.zeros_like(batch["attention_mask"])
+
+        for i, doc in enumerate(documents):
+            length = int(doc.padding_mask.sum())
+
+            yearseq = np.append(doc.input_ids[1, :length], doc.input_ids[1, length - 1])
+            ageseq = np.append(doc.input_ids[2, :length], doc.input_ids[2, length - 1])
+
+            assert len(tokens[i]) == len(yearseq) == len(ageseq)
+
+            starts = np.cumsum([0] + [len(word) + 1 for word in tokens[i][:-1]])
+
+            for j, (start, end) in enumerate(batch["offset_mapping"][i].tolist()):
+                if start == end:
+                    continue
+
+                word_id = np.searchsorted(starts, start, side="right") - 1
+
+                years[i, j] = int(yearseq[word_id])
+                ages[i, j] = int(ageseq[word_id])
+                temporal_mask[i, j] = int(word_id >= 6)
+
+        batch.pop("offset_mapping")
+
+        labels = batch["input_ids"].clone()
+        labels[batch["attention_mask"] == 0] = -100
+
+        batch["labels"] = labels
+        batch["years"] = years
+        batch["ages"] = ages
+        batch["temporal_mask"] = temporal_mask
+
+        batch["sequence_id"] = [doc.sequence_id for doc in documents]
+        batch["original_sequence"] = [doc.original_sequence for doc in documents]
+        batch["padding_mask"] = [doc.padding_mask for doc in documents]
+
+        return batch
